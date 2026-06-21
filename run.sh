@@ -23,6 +23,12 @@ usage() {
     echo "  browser-delete-all-reports Run Playwright to delete all draft expense reports"
     echo "  browser-delete-all-receipts Run Playwright to delete all available receipts"
     echo "  browser-nuke          Run Playwright to delete all reports AND all receipts"
+    echo "  browser-query-old [filter] Query and list historical/old expense reports (default: 'Last 90 Days')"
+    echo "  browser-report-details \"Name\" [filter] Get detailed view of an expense report by name"
+    echo "  browser-list-cards [filter] Query and list credit card transactions (default: 'All Corporate and Personal Cards')"
+    echo "  browser-card-details \"Merchant/ID\" [filter] Get detailed view of a card transaction by merchant or ID"
+    echo "  browser-add-delegate \"Name or Email\" [perms...] Add a new expense delegate (permissions: prepare, submit, approve)"
+    echo "  browser-remove-delegate \"Name or Email\" Remove an expense delegate"
     exit 1
 }
 
@@ -131,6 +137,61 @@ case "$CMD" in
     browser-nuke)
         ensure_venv
         python3 src/cli.py --browser-delete-all
+        ;;
+    browser-query-old)
+        ensure_venv
+        FILTER="${2:-Last 90 Days}"
+        python3 src/cli.py --browser-query-old --filter-view "$FILTER"
+        ;;
+    browser-report-details)
+        if [ $# -lt 2 ]; then
+            echo "Error: Please specify the report name."
+            echo "Usage: ./run.sh browser-report-details \"Report Name\" [filter]"
+            exit 1
+        fi
+        ensure_venv
+        FILTER="${3:-Last 90 Days}"
+        python3 src/cli.py --browser-report-details "$2" --filter-view "$FILTER"
+        ;;
+    browser-list-cards)
+        ensure_venv
+        FILTER="${2:-All Corporate and Personal Cards}"
+        python3 src/cli.py --browser-list-cards --filter-view "$FILTER"
+        ;;
+    browser-card-details)
+        if [ $# -lt 2 ]; then
+            echo "Error: Please specify the card transaction merchant name or transaction ID."
+            echo "Usage: ./run.sh browser-card-details \"Merchant or ID\" [filter]"
+            exit 1
+        fi
+        ensure_venv
+        FILTER="${3:-All Corporate and Personal Cards}"
+        python3 src/cli.py --browser-card-details "$2" --filter-view "$FILTER"
+        ;;
+    browser-add-delegate)
+        if [ $# -lt 2 ]; then
+            echo "Error: Please specify the delegate name/email."
+            echo "Usage: ./run.sh browser-add-delegate \"Name or Email\" [permission1 permission2 ...]"
+            exit 1
+        fi
+        ensure_venv
+        NAME="$2"
+        # Gather all permissions (arguments starting from $3)
+        shift 2
+        PERMS=("$@")
+        if [ ${#PERMS[@]} -eq 0 ]; then
+            PERMS=("prepare")
+        fi
+        python3 src/cli.py --browser-add-delegate "$NAME" --delegate-perms "${PERMS[@]}"
+        ;;
+    browser-remove-delegate)
+        if [ $# -lt 2 ]; then
+            echo "Error: Please specify the delegate name/email."
+            echo "Usage: ./run.sh browser-remove-delegate \"Name or Email\""
+            exit 1
+        fi
+        ensure_venv
+        python3 src/cli.py --browser-remove-delegate "$2"
         ;;
     *)
         usage

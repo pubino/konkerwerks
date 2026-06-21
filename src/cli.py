@@ -27,6 +27,16 @@ def run_tests():
     group.add_argument("--browser-delete-all-reports", action="store_true", help="Delete all draft expense reports via browser")
     group.add_argument("--browser-delete-all-receipts", action="store_true", help="Delete all available receipts via browser")
     group.add_argument("--browser-delete-all", action="store_true", help="Delete all draft expense reports AND all available receipts via browser")
+    group.add_argument("--browser-query-old", action="store_true", help="Query and list historical/old expense reports")
+    group.add_argument("--browser-report-details", type=str, help="Get detailed view of an expense report by name")
+    group.add_argument("--browser-list-cards", action="store_true", help="Query and list credit card transactions")
+    group.add_argument("--browser-card-details", type=str, help="Get detailed view of a card transaction by merchant or ID")
+    group.add_argument("--browser-add-delegate", type=str, help="Add a new expense delegate by name or email")
+    group.add_argument("--browser-remove-delegate", type=str, help="Remove an expense delegate by name or email")
+
+    # Helper arguments
+    parser.add_argument("--filter-view", type=str, default="Last 90 Days", help="Filter view for reports or card transactions (default: 'Last 90 Days' or 'All Corporate and Personal Cards')")
+    parser.add_argument("--delegate-perms", nargs="+", default=["prepare"], help="Permissions for delegate adding (prepare, submit, approve) (default: ['prepare'])")
 
     args = parser.parse_args()
 
@@ -301,6 +311,134 @@ def run_tests():
             print("=" * 60)
         except Exception as e:
             print(f"\n[ERROR] Failed to delete all items: {str(e)}")
+            print("=" * 60)
+            sys.exit(1)
+
+    # ----------------------------------------------------
+    # Flow I: Query Historical (Old) Reports
+    # ----------------------------------------------------
+    elif args.browser_query_old:
+        filter_val = args.filter_view or "Last 90 Days"
+        print("=" * 60)
+        print(f"     SAP Concur Browser-Based Historical Reports (Filter: {filter_val})")
+        print("=" * 60)
+        try:
+            browser_client = ConcurBrowserClient()
+            reports = browser_client.list_reports(filter_view=filter_val, headless=True)
+            print(f"[SUCCESS] Discovered {len(reports)} historical report(s):")
+            for idx, r in enumerate(reports, 1):
+                print(f"  {idx}. {r.get('name')} (Purpose: {r.get('purpose', 'None')})")
+            print("=" * 60)
+        except Exception as e:
+            print(f"\n[ERROR] Historical reports query failed: {str(e)}")
+            print("=" * 60)
+            sys.exit(1)
+
+    # ----------------------------------------------------
+    # Flow J: Report Details of a Report
+    # ----------------------------------------------------
+    elif args.browser_report_details:
+        report_name = args.browser_report_details
+        filter_val = args.filter_view
+        print("=" * 60)
+        print(f"     SAP Concur Report Details: '{report_name}'")
+        print("=" * 60)
+        try:
+            browser_client = ConcurBrowserClient()
+            details = browser_client.get_report_details(name=report_name, filter_view=filter_val, headless=True)
+            print(f"[SUCCESS] Details retrieved:")
+            print(f"  Name:     {details.get('report_name')}")
+            print(f"  Number:   {details.get('report_number')}")
+            print(f"  Purpose:  {details.get('purpose')}")
+            print(f"  Comment:  {details.get('comment')}")
+            print(f"  Expenses: ({len(details.get('expenses'))} items)")
+            for item in details.get('expenses'):
+                print(f"    - {item.get('raw_text')}")
+            print("=" * 60)
+        except Exception as e:
+            print(f"\n[ERROR] Failed to get report details: {str(e)}")
+            print("=" * 60)
+            sys.exit(1)
+
+    # ----------------------------------------------------
+    # Flow K: List Card Transactions
+    # ----------------------------------------------------
+    elif args.browser_list_cards:
+        filter_val = args.filter_view or "All Corporate and Personal Cards"
+        print("=" * 60)
+        print(f"     SAP Concur Card Transactions (Filter: {filter_val})")
+        print("=" * 60)
+        try:
+            browser_client = ConcurBrowserClient()
+            txs = browser_client.list_card_transactions(card_type_filter=filter_val, headless=True)
+            print(f"[SUCCESS] Discovered {len(txs)} transaction(s):")
+            for idx, t in enumerate(txs, 1):
+                print(f"  {idx}. {t.get('raw_text')}")
+            print("=" * 60)
+        except Exception as e:
+            print(f"\n[ERROR] Listing card transactions failed: {str(e)}")
+            print("=" * 60)
+            sys.exit(1)
+
+    # ----------------------------------------------------
+    # Flow L: Get Card Transaction Details
+    # ----------------------------------------------------
+    elif args.browser_card_details:
+        tx_id = args.browser_card_details
+        filter_val = args.filter_view
+        print("=" * 60)
+        print(f"     SAP Concur Card Transaction Details: '{tx_id}'")
+        print("=" * 60)
+        try:
+            browser_client = ConcurBrowserClient()
+            details = browser_client.get_card_transaction_details(merchant_or_id=tx_id, card_type_filter=filter_val, headless=True)
+            print(f"[SUCCESS] Transaction details:")
+            print(f"  Merchant:     {details.get('merchant')}")
+            print(f"  Date:         {details.get('date')}")
+            print(f"  Amount:       {details.get('amount')}")
+            print(f"  ID:           {details.get('transaction_id')}")
+            print(f"  Card Program: {details.get('card_program')}")
+            print("=" * 60)
+        except Exception as e:
+            print(f"\n[ERROR] Failed to get transaction details: {str(e)}")
+            print("=" * 60)
+            sys.exit(1)
+
+    # ----------------------------------------------------
+    # Flow M: Add Delegate
+    # ----------------------------------------------------
+    elif args.browser_add_delegate:
+        name = args.browser_add_delegate
+        perms = args.delegate_perms or ["prepare"]
+        print("=" * 60)
+        print(f"     SAP Concur Add Expense Delegate: '{name}'")
+        print(f"     Permissions: {perms}")
+        print("=" * 60)
+        try:
+            browser_client = ConcurBrowserClient()
+            browser_client.add_expense_delegate(name_or_email=name, permissions=perms, headless=True)
+            print(f"\n[SUCCESS] Delegate '{name}' added successfully!")
+            print("=" * 60)
+        except Exception as e:
+            print(f"\n[ERROR] Failed to add delegate: {str(e)}")
+            print("=" * 60)
+            sys.exit(1)
+
+    # ----------------------------------------------------
+    # Flow N: Remove Delegate
+    # ----------------------------------------------------
+    elif args.browser_remove_delegate:
+        name = args.browser_remove_delegate
+        print("=" * 60)
+        print(f"     SAP Concur Remove Expense Delegate: '{name}'")
+        print("=" * 60)
+        try:
+            browser_client = ConcurBrowserClient()
+            browser_client.remove_expense_delegate(name_or_email=name, headless=True)
+            print(f"\n[SUCCESS] Delegate '{name}' removed successfully!")
+            print("=" * 60)
+        except Exception as e:
+            print(f"\n[ERROR] Failed to remove delegate: {str(e)}")
             print("=" * 60)
             sys.exit(1)
 

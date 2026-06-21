@@ -151,6 +151,72 @@ def run_browser_smoke_test():
         assert "taxi_receipt.png" not in receipts_after, "Expected 'taxi_receipt.png' to be deleted"
         print("         [PASS] Receipt deletion verified.")
 
+        # ----------------------------------------------------
+        # 10. NEW FEATURE: List Historical (Old) Reports
+        # ----------------------------------------------------
+        print("\n[Step 10] Listing historical reports (filter='Last 90 Days')...")
+        old_reports = client.list_reports(filter_view="Last 90 Days", headless=True)
+        print(f"         Old reports found: {len(old_reports)}")
+        assert len(old_reports) == 2, f"Expected 2 historical reports, found {len(old_reports)}"
+        assert any("Old Lodging Report 2025" in r["name"] for r in old_reports), "Expected Old Lodging Report 2025"
+        print("         [PASS] List historical reports verified.")
+
+        # ----------------------------------------------------
+        # 11. NEW FEATURE: Get Details of a Report
+        # ----------------------------------------------------
+        print("\n[Step 11] Fetching details for 'Old Lodging Report 2025'...")
+        details = client.get_report_details(name="Old Lodging Report 2025", filter_view="Last 90 Days", headless=True)
+        print(f"         Details: {details}")
+        assert details["success"] is True, "Expected success to be True"
+        assert details["report_number"] == "REP-100200", f"Expected REP-100200, got {details['report_number']}"
+        assert len(details["expenses"]) == 2, f"Expected 2 expense line items, got {len(details['expenses'])}"
+        print("         [PASS] Report details verification passed.")
+
+        # ----------------------------------------------------
+        # 12. NEW FEATURE: List Card Transactions
+        # ----------------------------------------------------
+        print("\n[Step 12] Listing Available Expenses (Card Transactions)...")
+        # Default: All Corporate and Personal Cards
+        txs_corp = client.list_card_transactions(card_type_filter="All Corporate and Personal Cards", headless=True)
+        print(f"         Corporate transactions: {txs_corp}")
+        assert len(txs_corp) == 2, f"Expected 2 corporate/personal transactions, found {len(txs_corp)}"
+        assert any("Uber Rides" in t["raw_text"] for t in txs_corp), "Expected Uber Rides in list"
+
+        # Purchasing Cards
+        txs_purch = client.list_card_transactions(card_type_filter="All Purchasing Cards", headless=True)
+        print(f"         Purchasing transactions: {txs_purch}")
+        assert len(txs_purch) == 1, f"Expected 1 purchasing transaction, found {len(txs_purch)}"
+        assert any("Office Depot" in t["raw_text"] for t in txs_purch), "Expected Office Depot in list"
+        print("         [PASS] List card transactions filtering verified.")
+
+        # ----------------------------------------------------
+        # 13. NEW FEATURE: Get Card Transaction Details
+        # ----------------------------------------------------
+        print("\n[Step 13] Fetching details for transaction 'Office Depot'...")
+        tx_details = client.get_card_transaction_details(merchant_or_id="Office Depot", card_type_filter="All Purchasing Cards", headless=True)
+        print(f"         Transaction details: {tx_details}")
+        assert tx_details["success"] is True, "Expected success to be True"
+        assert tx_details["merchant"] == "Office Depot", f"Expected Office Depot, got {tx_details['merchant']}"
+        assert tx_details["transaction_id"] == "TX_5002", f"Expected TX_5002, got {tx_details['transaction_id']}"
+        assert tx_details["card_program"] == "Purchasing Card", f"Expected Purchasing Card, got {tx_details['card_program']}"
+        print("         [PASS] Card transaction details verified.")
+
+        # ----------------------------------------------------
+        # 14. NEW FEATURE: Add Expense Delegate
+        # ----------------------------------------------------
+        print("\n[Step 14] Adding expense delegate 'John Doe'...")
+        add_del_res = client.add_expense_delegate(name_or_email="John Doe", permissions=["prepare", "submit"], headless=True)
+        assert add_del_res["success"] is True, "Expected delegate creation to succeed"
+        print("         [PASS] Expense delegate 'John Doe' successfully added.")
+
+        # ----------------------------------------------------
+        # 15. NEW FEATURE: Remove Expense Delegate
+        # ----------------------------------------------------
+        print("\n[Step 15] Removing expense delegate 'John Doe'...")
+        rem_del_res = client.remove_expense_delegate(name_or_email="John Doe", headless=True)
+        assert rem_del_res["success"] is True, "Expected delegate removal to succeed"
+        print("         [PASS] Expense delegate 'John Doe' successfully removed.")
+
         print("\n" + "=" * 60)
         print(" [SUCCESS] BROWSER CRUD & RECEIPT SMOKE TEST PASSED SUCCESSFULLY!")
         print("=" * 60 + "\n")

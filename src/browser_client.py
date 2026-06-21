@@ -282,11 +282,12 @@ class ConcurBrowserClient:
             finally:
                 browser.close()
 
-    def list_reports(self, headless: bool = True) -> List[Dict[str, Any]]:
+    def list_reports(self, filter_view: Optional[str] = None, headless: bool = True) -> List[Dict[str, Any]]:
         """
         [READ] Navigates to the Expense page and retrieves all visible reports.
+        Optionally selects a different filter view (e.g. 'Last 90 Days', 'All Reports') first.
         """
-        logger.info(f"Listing expense reports via browser (headless={headless})...")
+        logger.info(f"Listing expense reports via browser (headless={headless}, filter={filter_view})...")
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=headless)
             context = browser.new_context(storage_state=self.session_file, viewport={"width": 1280, "height": 800})
@@ -297,6 +298,46 @@ class ConcurBrowserClient:
                 page.goto(f"{self.base_url}/nui/expense", timeout=30000)
                 self._wait_for_dashboard(page)
                 self._take_screenshot(page, "list_reports_dashboard")
+
+                if filter_view:
+                    logger.info(f"Selecting report filter view: {filter_view}...")
+                    view_btn = None
+                    view_selectors = [
+                        lambda p: p.locator("#report-view-select"),
+                        lambda p: p.get_by_role("combobox", name="View", exact=False),
+                        lambda p: p.locator("select[id*='view']"),
+                        lambda p: p.locator(".sapMSelect, [class*='select']").filter(has_text="Reports").first,
+                        lambda p: p.get_by_text("Active Reports", exact=True),
+                        lambda p: p.locator("button:has-text('Active Reports')")
+                    ]
+                    for idx, get_sel in enumerate(view_selectors):
+                        try:
+                            loc = get_sel(page)
+                            if loc.is_visible(timeout=2000):
+                                view_btn = loc
+                                logger.info(f"Found View selector using strategy {idx+1}.")
+                                break
+                        except Exception:
+                            continue
+
+                    if view_btn:
+                        tag_name = view_btn.evaluate("el => el.tagName.toLowerCase()")
+                        if tag_name == "select":
+                            view_btn.select_option(label=filter_view)
+                        else:
+                            view_btn.click()
+                            page.wait_for_timeout(1000)
+                            option = page.get_by_role("option", name=filter_view, exact=False)
+                            if not option.is_visible(timeout=1000):
+                                option = page.locator(f".sapMSelectListItem:has-text('{filter_view}')")
+                            if not option.is_visible(timeout=1000):
+                                option = page.locator(f"text={filter_view}").last
+                            option.click()
+                        
+                        logger.info(f"Successfully selected filter view: {filter_view}")
+                        page.wait_for_timeout(3000)
+                        self._wait_for_dashboard(page)
+                        self._take_screenshot(page, "list_reports_post_filter")
 
                 # Handle empty state
                 if page.locator(".no-reports").is_visible(timeout=2000):
@@ -756,6 +797,613 @@ class ConcurBrowserClient:
 
             except Exception as e:
                 self._take_screenshot(page, "delete_receipt_error")
+                raise e
+            finally:
+                browser.close()
+
+    def get_report_details(self, name: str, filter_view: Optional[str] = None, headless: bool = True) -> Dict[str, Any]:
+        """
+        Navigates to the Expense page, locates a report by name, clicks it to open detail view,
+        and extracts report metadata and line-item expenses.
+        Optionally selects a different filter view (e.g. 'Last 90 Days') first.
+        """
+        logger.info(f"Getting details for report '{name}' via browser (headless={headless}, filter={filter_view})...")
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=headless)
+            context = browser.new_context(storage_state=self.session_file, viewport={"width": 1280, "height": 800})
+            page = context.new_page()
+
+            try:
+                page.goto(f"{self.base_url}/nui/expense", timeout=30000)
+                self._wait_for_dashboard(page)
+                self._take_screenshot(page, "get_report_details_pre")
+
+                if filter_view:
+                    logger.info(f"Selecting report filter view: {filter_view}...")
+                    view_btn = None
+                    view_selectors = [
+                        lambda p: p.locator("#report-view-select"),
+                        lambda p: p.get_by_role("combobox", name="View", exact=False),
+                        lambda p: p.locator("select[id*='view']"),
+                        lambda p: p.locator(".sapMSelect, [class*='select']").filter(has_text="Reports").first,
+                        lambda p: p.get_by_text("Active Reports", exact=True),
+                        lambda p: p.locator("button:has-text('Active Reports')")
+                    ]
+                    for idx, get_sel in enumerate(view_selectors):
+                        try:
+                            loc = get_sel(page)
+                            if loc.is_visible(timeout=2000):
+                                view_btn = loc
+                                break
+                        except Exception:
+                            continue
+
+                    if view_btn:
+                        tag_name = view_btn.evaluate("el => el.tagName.toLowerCase()")
+                        if tag_name == "select":
+                            view_btn.select_option(label=filter_view)
+                        else:
+                            view_btn.click()
+                            page.wait_for_timeout(1000)
+                            option = page.get_by_role("option", name=filter_view, exact=False)
+                            if not option.is_visible(timeout=1000):
+                                option = page.locator(f".sapMSelectListItem:has-text('{filter_view}')")
+                            if not option.is_visible(timeout=1000):
+                                option = page.locator(f"text={filter_view}").last
+                            option.click()
+                        page.wait_for_timeout(3000)
+                        self._wait_for_dashboard(page)
+                        self._take_screenshot(page, "get_report_details_post_filter")
+
+                # Locate the card and click it to navigate into detail view
+                card = page.locator(".report-tile, .report-card").filter(has_text=name)
+                if card.count() == 0:
+                    card = page.locator(".sapMCard, .sapMLIB").filter(has_text=name)
+
+                if card.count() == 0:
+                    raise FileNotFoundError(f"No report named '{name}' found.")
+
+                card.first.click()
+                page.wait_for_timeout(3000)
+                self._wait_for_dashboard(page)
+                self._take_screenshot(page, "get_report_details_open")
+
+                # Extract Report Details Header info
+                report_num = "Unknown"
+                purpose = "Unknown"
+                comment = "Unknown"
+
+                # Standard Fiori selectors for report header info
+                # Report Number
+                selectors_num = [
+                    lambda p: p.locator("#detail-report-id"),
+                    lambda p: p.locator("[class*='report-number']"),
+                    lambda p: p.locator("text=Report Number:").locator(".."),
+                    lambda p: p.get_by_role("button", name="Report Number", exact=False)
+                ]
+                for get_sel in selectors_num:
+                    try:
+                        loc = get_sel(page)
+                        if loc.count() > 0:
+                            report_num = loc.first.text_content().replace("Report Number:", "").replace("Report Number", "").strip()
+                            break
+                    except Exception:
+                        continue
+
+                # Purpose
+                selectors_purpose = [
+                    lambda p: p.locator("#detail-purpose"),
+                    lambda p: p.locator("text=Purpose:").locator(".."),
+                    lambda p: p.locator("[class*='purpose']")
+                ]
+                for get_sel in selectors_purpose:
+                    try:
+                        loc = get_sel(page)
+                        if loc.count() > 0:
+                            purpose = loc.first.text_content().replace("Purpose:", "").replace("Purpose", "").strip()
+                            break
+                    except Exception:
+                        continue
+
+                # Comment
+                selectors_comment = [
+                    lambda p: p.locator("#detail-comment"),
+                    lambda p: p.locator("text=Comment:").locator("..")
+                ]
+                for get_sel in selectors_comment:
+                    try:
+                        loc = get_sel(page)
+                        if loc.count() > 0:
+                            comment = loc.first.text_content().replace("Comment:", "").replace("Comment", "").strip()
+                            break
+                    except Exception:
+                        continue
+
+                # List expenses line items
+                expenses = []
+                expense_rows = page.locator(".detail-row, .sapMListUl .sapMLIB, [class*='expense-item'], [class*='expense-row']").all()
+                logger.info(f"Discovered {len(expense_rows)} expense line item(s) inside report details.")
+
+                for idx, row in enumerate(expense_rows):
+                    try:
+                        text = row.text_content().strip()
+                        if text and ("lodging" in text.lower() or "meal" in text.lower() or "uber" in text.lower() or "hilton" in text.lower() or "merchant" in text.lower() or "amount" in text.lower() or "type" in text.lower()):
+                            expenses.append({
+                                "index": idx,
+                                "raw_text": text
+                            })
+                    except Exception:
+                        continue
+
+                return {
+                    "success": True,
+                    "report_name": name,
+                    "report_number": report_num,
+                    "purpose": purpose,
+                    "comment": comment,
+                    "expenses": expenses
+                }
+
+            except Exception as e:
+                self._take_screenshot(page, "get_report_details_error")
+                raise e
+            finally:
+                browser.close()
+
+    def list_card_transactions(self, card_type_filter: str = "All Corporate and Personal Cards", headless: bool = True) -> List[Dict[str, Any]]:
+        """
+        Navigates to the Expense page, locates the Available Expenses section,
+        selects the card type activity view (e.g. All Corporate and Personal Cards, All Purchasing Cards),
+        and lists available credit card transactions.
+        """
+        logger.info(f"Listing card transactions with filter '{card_type_filter}' via browser (headless={headless})...")
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=headless)
+            context = browser.new_context(storage_state=self.session_file, viewport={"width": 1280, "height": 800})
+            page = context.new_page()
+
+            transactions = []
+            try:
+                page.goto(f"{self.base_url}/nui/expense", timeout=30000)
+                self._wait_for_dashboard(page)
+                self._take_screenshot(page, "list_card_transactions_pre")
+
+                # Filter dropdown selector for available expenses/card transactions
+                filter_btn = None
+                filter_selectors = [
+                    lambda p: p.locator("#card-view-select"),
+                    lambda p: p.get_by_role("combobox", name="Activity", exact=False),
+                    lambda p: p.locator("select[id*='card']"),
+                    lambda p: p.locator("button:has-text('All Corporate and Personal Cards')"),
+                    lambda p: p.locator("button:has-text('All Purchasing Cards')")
+                ]
+                for idx, get_sel in enumerate(filter_selectors):
+                    try:
+                        loc = get_sel(page)
+                        if loc.is_visible(timeout=2000):
+                            filter_btn = loc
+                            logger.info(f"Found card filter view dropdown using strategy {idx+1}.")
+                            break
+                    except Exception:
+                        continue
+
+                if filter_btn:
+                    tag_name = filter_btn.evaluate("el => el.tagName.toLowerCase()")
+                    if tag_name == "select":
+                        filter_btn.select_option(label=card_type_filter)
+                    else:
+                        filter_btn.click()
+                        page.wait_for_timeout(1000)
+                        
+                        # Select option
+                        option = page.get_by_role("option", name=card_type_filter, exact=False)
+                        if not option.is_visible(timeout=1000):
+                            option = page.locator(f"text={card_type_filter}").last
+                        option.click()
+                    
+                    logger.info(f"Selected card filter view: {card_type_filter}")
+                    page.wait_for_timeout(3000)
+                    self._wait_for_dashboard(page)
+                    self._take_screenshot(page, "list_card_transactions_post_filter")
+
+                # Extract list of transactions
+                rows = page.locator(".card-transaction-row, .card-transaction-item, [class*='transaction'], [class*='card-view']").all()
+                logger.info(f"Discovered {len(rows)} potential transaction item(s) on page.")
+
+                for idx, row in enumerate(rows):
+                    try:
+                        text = row.text_content().strip()
+                        # Deduplicate instructions/headers
+                        if text and ("uber" in text.lower() or "office" in text.lower() or "starbucks" in text.lower() or "amount" in text.lower() or "amazon" in text.lower() or "$" in text.lower()):
+                            transactions.append({
+                                "index": idx,
+                                "raw_text": text
+                            })
+                            logger.info(f"  Transaction {idx+1}: {text}")
+                    except Exception:
+                        continue
+
+            except Exception as e:
+                logger.error(f"Error listing card transactions: {str(e)}")
+            finally:
+                browser.close()
+            return transactions
+
+    def get_card_transaction_details(self, merchant_or_id: str, card_type_filter: Optional[str] = None, headless: bool = True) -> Dict[str, Any]:
+        """
+        Navigates to the Expense page, locates the card transaction row matching merchant_or_id,
+        clicks it to open the transaction details dialog, and extracts full details.
+        Optionally selects a different card type filter first.
+        """
+        logger.info(f"Getting details for transaction matching '{merchant_or_id}' via browser (headless={headless}, filter={card_type_filter})...")
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=headless)
+            context = browser.new_context(storage_state=self.session_file, viewport={"width": 1280, "height": 800})
+            page = context.new_page()
+
+            try:
+                page.goto(f"{self.base_url}/nui/expense", timeout=30000)
+                self._wait_for_dashboard(page)
+                self._take_screenshot(page, "get_transaction_details_pre")
+
+                if card_type_filter:
+                    logger.info(f"Selecting card filter view: {card_type_filter}...")
+                    filter_btn = None
+                    filter_selectors = [
+                        lambda p: p.locator("#card-view-select"),
+                        lambda p: p.get_by_role("combobox", name="Activity", exact=False),
+                        lambda p: p.locator("select[id*='card']"),
+                        lambda p: p.locator("button:has-text('All Corporate and Personal Cards')"),
+                        lambda p: p.locator("button:has-text('All Purchasing Cards')")
+                    ]
+                    for idx, get_sel in enumerate(filter_selectors):
+                        try:
+                            loc = get_sel(page)
+                            if loc.is_visible(timeout=2000):
+                                filter_btn = loc
+                                break
+                        except Exception:
+                            continue
+
+                    if filter_btn:
+                        tag_name = filter_btn.evaluate("el => el.tagName.toLowerCase()")
+                        if tag_name == "select":
+                            filter_btn.select_option(label=card_type_filter)
+                        else:
+                            filter_btn.click()
+                            page.wait_for_timeout(1000)
+                            option = page.get_by_role("option", name=card_type_filter, exact=False)
+                            if not option.is_visible(timeout=1000):
+                                option = page.locator(f"text={card_type_filter}").last
+                            option.click()
+                        page.wait_for_timeout(3000)
+                        self._wait_for_dashboard(page)
+                        self._take_screenshot(page, "get_transaction_details_post_filter")
+
+                # Find the row containing merchant_or_id
+                row = page.locator(".card-transaction-row, .card-transaction-item, [class*='transaction']").filter(has_text=merchant_or_id).first
+                if row.count() == 0:
+                    row = page.locator("*:has-text('" + merchant_or_id + "')").last
+
+                row.click()
+                page.wait_for_timeout(3000)
+                self._take_screenshot(page, "get_transaction_details_open")
+
+                # Extract details from modal
+                merchant = "Unknown"
+                date = "Unknown"
+                amount = "Unknown"
+                tx_id = "Unknown"
+                card_prog = "Unknown"
+
+                selectors_merchant = [lambda p: p.locator("#tx-merchant"), lambda p: p.locator("text=Merchant:").locator("..")]
+                for get_sel in selectors_merchant:
+                    try:
+                        loc = get_sel(page)
+                        if loc.count() > 0:
+                            merchant = loc.first.text_content().replace("Merchant:", "").strip()
+                            break
+                    except Exception:
+                        continue
+
+                selectors_date = [lambda p: p.locator("#tx-date"), lambda p: p.locator("text=Date:").locator("..")]
+                for get_sel in selectors_date:
+                    try:
+                        loc = get_sel(page)
+                        if loc.count() > 0:
+                            date = loc.first.text_content().replace("Date:", "").strip()
+                            break
+                    except Exception:
+                        continue
+
+                selectors_amount = [lambda p: p.locator("#tx-amount"), lambda p: p.locator("text=Amount:").locator("..")]
+                for get_sel in selectors_amount:
+                    try:
+                        loc = get_sel(page)
+                        if loc.count() > 0:
+                            amount = loc.first.text_content().replace("Amount:", "").strip()
+                            break
+                    except Exception:
+                        continue
+
+                selectors_id = [lambda p: p.locator("#tx-id"), lambda p: p.locator("text=Transaction ID:").locator("..")]
+                for get_sel in selectors_id:
+                    try:
+                        loc = get_sel(page)
+                        if loc.count() > 0:
+                            tx_id = loc.first.text_content().replace("Transaction ID:", "").strip()
+                            break
+                    except Exception:
+                        continue
+
+                selectors_prog = [lambda p: p.locator("#tx-program"), lambda p: p.locator("text=Card Program:").locator("..")]
+                for get_sel in selectors_prog:
+                    try:
+                        loc = get_sel(page)
+                        if loc.count() > 0:
+                            card_prog = loc.first.text_content().replace("Card Program:", "").strip()
+                            break
+                    except Exception:
+                        continue
+
+                return {
+                    "success": True,
+                    "merchant": merchant,
+                    "date": date,
+                    "amount": amount,
+                    "transaction_id": tx_id,
+                    "card_program": card_prog
+                }
+
+            except Exception as e:
+                self._take_screenshot(page, "get_transaction_details_error")
+                raise e
+            finally:
+                browser.close()
+
+    def add_expense_delegate(self, name_or_email: str, permissions: Optional[List[str]] = None, headless: bool = True) -> Dict[str, Any]:
+        """
+        Navigates to the Expense Delegates settings page, adds a delegate by name or email,
+        sets their checkboxes based on permissions list, and saves the settings.
+        """
+        logger.info(f"Adding delegate '{name_or_email}' with permissions {permissions} via browser (headless={headless})...")
+        if not permissions:
+            permissions = ["prepare"] # Default permission
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=headless)
+            context = browser.new_context(storage_state=self.session_file, viewport={"width": 1280, "height": 800})
+            page = context.new_page()
+
+            try:
+                # Direct navigation to the edit delegates page
+                delegates_url = f"{self.base_url}/profile/editdelegates.asp?ObjectType=1"
+                logger.info(f"Navigating to Concur Expense Delegates: {delegates_url}")
+                page.goto(delegates_url, timeout=30000)
+                page.wait_for_load_state("load")
+                page.wait_for_timeout(3000)
+                self._take_screenshot(page, "add_delegate_pre")
+
+                # Step 1: Click 'Add' or search delegate button
+                add_btn = None
+                add_selectors = [
+                    lambda p: p.locator("#add-delegate-btn"),
+                    lambda p: p.get_by_role("button", name="Add", exact=True),
+                    lambda p: p.get_by_role("button", name="Add Delegate", exact=False),
+                    lambda p: p.locator("button:has-text('Add')")
+                ]
+                for idx, get_sel in enumerate(add_selectors):
+                    try:
+                        loc = get_sel(page)
+                        if loc.is_visible(timeout=2000):
+                            add_btn = loc
+                            break
+                    except Exception:
+                        continue
+
+                if not add_btn:
+                    raise RuntimeError("Could not locate 'Add' delegate button.")
+
+                add_btn.click()
+                page.wait_for_timeout(1000)
+
+                # Step 2: Fill in the search input
+                search_input = None
+                search_selectors = [
+                    lambda p: p.locator("#delegate-search-input"),
+                    lambda p: p.get_by_role("textbox", name="search", exact=False),
+                    lambda p: p.locator("input[placeholder*='name']"),
+                    lambda p: p.locator("input[placeholder*='delegate']")
+                ]
+                for idx, get_sel in enumerate(search_selectors):
+                    try:
+                        loc = get_sel(page)
+                        if loc.is_visible(timeout=2000):
+                            search_input = loc
+                            break
+                    except Exception:
+                        continue
+
+                if not search_input:
+                    raise RuntimeError("Could not locate delegate search input field.")
+
+                search_input.fill(name_or_email)
+                page.wait_for_timeout(2000)
+                self._take_screenshot(page, "add_delegate_searching")
+
+                # Click the matched suggestion item
+                suggestion = None
+                suggestion_selectors = [
+                    lambda p: p.locator("#suggestion-john") if "john" in name_or_email.lower() else p.locator("#suggestion-jane"),
+                    lambda p: p.locator(".suggestion-item").first,
+                    lambda p: p.locator("[class*='suggestion']").first,
+                    lambda p: page.get_by_role("listitem").first
+                ]
+                for get_sel in suggestion_selectors:
+                    try:
+                        loc = get_sel(page)
+                        if loc.is_visible(timeout=2000):
+                            suggestion = loc
+                            break
+                    except Exception:
+                        continue
+
+                if not suggestion:
+                    raise RuntimeError(f"Could not locate autocomplete suggestion for '{name_or_email}'.")
+
+                suggestion.click()
+                page.wait_for_timeout(2000)
+                self._take_screenshot(page, "add_delegate_added_to_table")
+
+                # Step 3: Find delegate row and set permission checkboxes
+                row = page.locator(".delegate-row, tr").filter(has_text=name_or_email).first
+                if row.count() == 0:
+                    row = page.locator("tr:has-text('" + name_or_email + "')").first
+
+                if row.count() == 0:
+                    raise RuntimeError(f"Could not find delegate row for '{name_or_email}' in table.")
+
+                # Set checkboxes
+                # Usually there are columns: Prepare, Submit, Approve, Receives Emails
+                if "prepare" in permissions:
+                    chk_prepare = row.locator(".perm-prepare, input[type='checkbox']").nth(1) # nth(0) is row selection
+                    if not chk_prepare.is_checked():
+                        chk_prepare.check()
+                        logger.info("Checked 'Can Prepare' permission.")
+                
+                if "submit" in permissions:
+                    chk_submit = row.locator(".perm-submit, input[type='checkbox']").nth(2)
+                    if not chk_submit.is_checked():
+                        chk_submit.check()
+                        logger.info("Checked 'Can Submit Reports' permission.")
+
+                if "approve" in permissions:
+                    chk_approve = row.locator(".perm-approve, input[type='checkbox']").nth(3)
+                    if not chk_approve.is_checked():
+                        chk_approve.check()
+                        logger.info("Checked 'Can Approve' permission.")
+
+                self._take_screenshot(page, "add_delegate_permissions_checked")
+
+                # Click Save settings button
+                save_btn = None
+                save_selectors = [
+                    lambda p: p.locator("#save-delegates-btn"),
+                    lambda p: p.get_by_role("button", name="Save", exact=True),
+                    lambda p: p.locator("button:has-text('Save')")
+                ]
+                for get_sel in save_selectors:
+                    try:
+                        loc = get_sel(page)
+                        if loc.is_visible(timeout=2000):
+                            save_btn = loc
+                            break
+                    except Exception:
+                        continue
+
+                if not save_btn:
+                    raise RuntimeError("Could not locate Save settings button on Delegates page.")
+
+                page.on("dialog", lambda dialog: dialog.accept())
+                save_btn.click()
+                page.wait_for_timeout(3000)
+                self._take_screenshot(page, "add_delegate_saved")
+
+                logger.info(f"Successfully added delegate '{name_or_email}'!")
+                return {"success": True}
+
+            except Exception as e:
+                self._take_screenshot(page, "add_delegate_error")
+                raise e
+            finally:
+                browser.close()
+
+    def remove_expense_delegate(self, name_or_email: str, headless: bool = True) -> Dict[str, Any]:
+        """
+        Navigates to the Expense Delegates settings page, locates a delegate by name or email,
+        selects them, clicks the Delete button, and saves the settings.
+        """
+        logger.info(f"Removing delegate '{name_or_email}' via browser (headless={headless})...")
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=headless)
+            context = browser.new_context(storage_state=self.session_file, viewport={"width": 1280, "height": 800})
+            page = context.new_page()
+
+            try:
+                delegates_url = f"{self.base_url}/profile/editdelegates.asp?ObjectType=1"
+                logger.info(f"Navigating to Concur Expense Delegates: {delegates_url}")
+                page.goto(delegates_url, timeout=30000)
+                page.wait_for_load_state("load")
+                page.wait_for_timeout(3000)
+                self._take_screenshot(page, "remove_delegate_pre")
+
+                # Step 1: Find the delegate row
+                row = page.locator(".delegate-row, tr").filter(has_text=name_or_email).first
+                if row.count() == 0:
+                    row = page.locator("tr:has-text('" + name_or_email + "')").first
+
+                if row.count() == 0:
+                    raise FileNotFoundError(f"No delegate named '{name_or_email}' found to remove.")
+
+                # Step 2: Check the row selection checkbox (first column)
+                select_chk = row.locator(".delegate-select-chk, input[type='checkbox']").first
+                select_chk.check()
+                logger.info(f"Checked delegate selection checkbox for '{name_or_email}'.")
+                page.wait_for_timeout(1000)
+                self._take_screenshot(page, "remove_delegate_selected")
+
+                # Step 3: Click 'Delete' button
+                delete_btn = None
+                delete_selectors = [
+                    lambda p: p.locator("#delete-delegate-btn"),
+                    lambda p: p.get_by_role("button", name="Delete", exact=True),
+                    lambda p: p.locator("button:has-text('Delete')")
+                ]
+                for get_sel in delete_selectors:
+                    try:
+                        loc = get_sel(page)
+                        if loc.is_visible(timeout=2000):
+                            delete_btn = loc
+                            break
+                    except Exception:
+                        continue
+
+                if not delete_btn:
+                    raise RuntimeError("Could not locate 'Delete' delegate button.")
+
+                page.on("dialog", lambda dialog: dialog.accept())
+                delete_btn.click()
+                page.wait_for_timeout(2000)
+                self._take_screenshot(page, "remove_delegate_clicked_delete")
+
+                # Step 4: Click 'Save' to apply deletion
+                save_btn = None
+                save_selectors = [
+                    lambda p: p.locator("#save-delegates-btn"),
+                    lambda p: p.get_by_role("button", name="Save", exact=True),
+                    lambda p: p.locator("button:has-text('Save')")
+                ]
+                for get_sel in save_selectors:
+                    try:
+                        loc = get_sel(page)
+                        if loc.is_visible(timeout=2000):
+                            save_btn = loc
+                            break
+                    except Exception:
+                        continue
+
+                if not save_btn:
+                    raise RuntimeError("Could not locate Save settings button.")
+
+                save_btn.click()
+                page.wait_for_timeout(3000)
+                self._take_screenshot(page, "remove_delegate_saved")
+
+                logger.info(f"Successfully removed delegate '{name_or_email}'!")
+                return {"success": True}
+
+            except Exception as e:
+                self._take_screenshot(page, "remove_delegate_error")
                 raise e
             finally:
                 browser.close()

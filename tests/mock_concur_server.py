@@ -6,7 +6,9 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 # Global states
 REPORTS = []
 RECEIPTS = []
-
+DELEGATES = [
+    {"name": "Existing Delegate", "email": "existing@example.com", "prepare": True, "submit": False, "approve": False}
+]
 
 DASHBOARD_HTML = """<!DOCTYPE html>
 <html>
@@ -15,9 +17,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <style>
         body { font-family: sans-serif; padding: 20px; background-color: #f7f9fa; }
         .section-title { margin-top: 30px; border-bottom: 2px solid #e0e5ea; padding-bottom: 5px; color: #1a1a1a; }
-        .report-card { border: 1px solid #e1e4e6; border-radius: 8px; background: white; padding: 15px; margin: 15px 0; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .report-card { border: 1px solid #e1e4e6; border-radius: 8px; background: white; padding: 15px; margin: 15px 0; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 4px rgba(0,0,0,0.05); cursor: pointer; }
         .report-info { flex: 1; }
-        .report-name { font-weight: bold; font-size: 1.1em; color: #1a1a1a; }
+        .report-name { font-weight: bold; font-size: 1.1em; color: #0070d2; text-decoration: underline; }
         .report-purpose { color: #5c646b; margin-left: 10px; font-style: italic; }
         .button { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 0.9em; }
         #create-report-btn { background-color: #0070d2; color: white; margin-bottom: 10px; }
@@ -26,26 +28,70 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         #report-dialog { border: 1px solid #c9c9c9; border-radius: 6px; padding: 25px; position: absolute; background: white; top: 100px; left: 100px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); width: 350px; z-index: 1000; }
         .form-group { margin-bottom: 15px; }
         .form-group label { display: block; margin-bottom: 5px; font-weight: bold; }
-        .form-group input, .form-group textarea { width: 95%; padding: 8px; border: 1px solid #c9c9c9; border-radius: 4px; }
+        .form-group input, .form-group textarea, .form-group select { width: 95%; padding: 8px; border: 1px solid #c9c9c9; border-radius: 4px; }
         .form-actions { display: flex; justify-content: flex-end; }
         .form-actions button { margin-left: 10px; }
         
-        /* Available Receipts Gallery */
+        /* Available Receipts / Transactions Gallery */
         .receipt-gallery { display: flex; gap: 15px; flex-wrap: wrap; margin-top: 15px; }
         .available-receipt-thumbnail { border: 1px solid #c9c9c9; border-radius: 6px; padding: 15px; width: 120px; text-align: center; background: white; cursor: pointer; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
         .available-receipt-thumbnail:hover { border-color: #0070d2; }
+        .card-transaction-thumbnail { border: 1px solid #c9c9c9; border-radius: 6px; padding: 15px; width: 120px; text-align: center; background: white; cursor: pointer; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .card-transaction-thumbnail:hover { border-color: #0070d2; }
         .receipt-icon { font-size: 2em; display: block; margin-bottom: 5px; }
         .receipt-name { font-size: 0.85em; word-break: break-all; font-weight: bold; color: #1a1a1a; }
         #receipt-modal { border: 1px solid #c9c9c9; border-radius: 6px; padding: 25px; position: absolute; background: white; top: 150px; left: 150px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); width: 300px; z-index: 1001; text-align: center; }
-        #receipt-modal img { max-width: 100%; height: auto; border: 1px solid #ccc; margin-bottom: 15px; }
+        
+        /* Transaction Details Modal */
+        #transaction-modal { border: 1px solid #c9c9c9; border-radius: 6px; padding: 25px; position: absolute; background: white; top: 200px; left: 200px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); width: 320px; z-index: 1002; }
+        
+        /* Report Details View Panel */
+        #report-details-panel { display: none; background: white; padding: 20px; border: 1px solid #e1e4e6; border-radius: 8px; margin-top: 20px; }
+        .detail-row { margin-bottom: 10px; border-bottom: 1px solid #eee; padding-bottom: 5px; }
     </style>
 </head>
 <body>
     <h1>Expense Dashboard</h1>
     
+    <div style="margin-bottom: 15px;">
+        <label for="report-view-select" style="font-weight:bold;">View: </label>
+        <!-- The View select dropdown to filter Reports -->
+        <select id="report-view-select" style="width: 200px; padding: 5px;" onchange="changeReportView(this.value)">
+            <option value="Active Reports">Active Reports</option>
+            <option value="Last 90 Days">Last 90 Days</option>
+            <option value="All Reports">All Reports</option>
+        </select>
+    </div>
+
     <h2 class="section-title">Expense Reports</h2>
     <button id="create-report-btn" class="button" onclick="showCreateModal()">Create New Report</button>
     <div id="reports-container"></div>
+
+    <!-- Report Details Panel -->
+    <div id="report-details-panel">
+        <h2 id="detail-header-title">Report Detail</h2>
+        <p><strong>Report Number / ID:</strong> <span id="detail-report-id">REP-998877</span></p>
+        <p><strong>Purpose:</strong> <span id="detail-purpose"></span></p>
+        <p><strong>Comment:</strong> <span id="detail-comment"></span></p>
+        
+        <h3>Expenses (Line Items)</h3>
+        <div id="detail-expenses-list">
+            <div class="detail-row"><strong>Date:</strong> 2026-06-12 | <strong>Type:</strong> Lodging | <strong>Amount:</strong> $150.00 | <strong>Merchant:</strong> Hilton</div>
+            <div class="detail-row"><strong>Date:</strong> 2026-06-13 | <strong>Type:</strong> Meal | <strong>Amount:</strong> $45.20 | <strong>Merchant:</strong> Italian Bistro</div>
+        </div>
+        <button class="button" onclick="closeReportDetails()" style="margin-top:15px; background:#e0e5ea;">Back to List</button>
+    </div>
+
+    <h2 class="section-title">Available Expenses (Card Transactions)</h2>
+    <div style="margin-bottom: 15px;">
+        <label for="card-view-select" style="font-weight:bold;">Activity: </label>
+        <!-- Card views filter dropdown -->
+        <select id="card-view-select" style="width: 250px; padding: 5px;" onchange="changeCardView(this.value)">
+            <option value="All Corporate and Personal Cards">All Corporate and Personal Cards</option>
+            <option value="All Purchasing Cards">All Purchasing Cards</option>
+        </select>
+    </div>
+    <div id="cards-container" class="receipt-gallery"></div>
 
     <h2 class="section-title">Available Receipts</h2>
     <div id="receipts-container" class="receipt-gallery"></div>
@@ -87,31 +133,82 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         </div>
     </div>
 
+    <!-- Card Transaction Details Dialog -->
+    <div id="transaction-modal" style="display:none;">
+        <h2>Card Transaction Details</h2>
+        <p><strong>Merchant:</strong> <span id="tx-merchant"></span></p>
+        <p><strong>Date:</strong> <span id="tx-date"></span></p>
+        <p><strong>Amount:</strong> <span id="tx-amount"></span></p>
+        <p><strong>Transaction ID:</strong> <span id="tx-id"></span></p>
+        <p><strong>Card Program:</strong> <span id="tx-program"></span></p>
+        <div style="margin-top: 20px;">
+            <button type="button" class="button" onclick="closeTxModal()">Close</button>
+        </div>
+    </div>
+
     <script>
-        // Fetch reports list from server
+        let currentReportView = "Active Reports";
+        let currentCardView = "All Corporate and Personal Cards";
+        let reportsData = [];
+        
+        // Static historical reports
+        const historicalReports = [
+            { name: "Old Lodging Report 2025", purpose: "FY2025 Conference", comment: "Approved & Paid", id: "REP-100200" },
+            { name: "Q1 Travel Report", purpose: "Client Visits Q1", comment: "Payment Completed", id: "REP-300400" }
+        ];
+
+        // Static credit card transactions
+        const cardTransactions = [
+            { id: "TX_5001", merchant: "Uber Rides", date: "2026-06-15", amount: "$24.50", program: "Corporate Card" },
+            { id: "TX_5002", merchant: "Office Depot", date: "2026-06-18", amount: "$189.99", program: "Purchasing Card" },
+            { id: "TX_5003", merchant: "Starbucks Breakfast", date: "2026-06-20", amount: "$8.75", program: "Personal Card" }
+        ];
+
         async function fetchReports() {
             const res = await fetch('/api/reports');
-            const reports = await res.json();
-            renderReports(reports);
+            reportsData = await res.json();
+            renderReports();
         }
 
-        // Fetch receipts list from server
         async function fetchReceipts() {
             const res = await fetch('/api/receipts');
             const receipts = await res.json();
             renderReceipts(receipts);
         }
 
-        function renderReports(reports) {
+        function changeReportView(val) {
+            currentReportView = val;
+            renderReports();
+        }
+
+        function changeCardView(val) {
+            currentCardView = val;
+            renderTransactions();
+        }
+
+        function renderReports() {
             const container = document.getElementById('reports-container');
             container.innerHTML = '';
-            if (reports.length === 0) {
+            
+            let list = [...reportsData];
+            if (currentReportView === "Last 90 Days" || currentReportView === "All Reports") {
+                list = list.concat(historicalReports);
+            }
+
+            if (list.length === 0) {
                 container.innerHTML = '<p class="no-reports">No reports found.</p>';
                 return;
             }
-            reports.forEach((r, idx) => {
+
+            list.forEach((r, idx) => {
                 const card = document.createElement('div');
                 card.className = 'report-card';
+                // Open details on clicking the card info (except edit/delete buttons)
+                card.onclick = (e) => {
+                    if (e.target.tagName !== 'BUTTON') {
+                        showReportDetails(r);
+                    }
+                };
                 card.innerHTML = `
                     <div class="report-info">
                         <span class="report-name">${r.name}</span>
@@ -119,8 +216,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                         <p style="margin: 5px 0 0 0; font-size:12px; color:#5c646b;">Comment: ${r.comment || 'None'}</p>
                     </div>
                     <div>
-                        <button class="button edit-btn" onclick="showEditModal(${idx}, '${r.name}', '${r.purpose || ''}', '${r.comment || ''}')">Edit</button>
-                        <button class="button delete-btn" onclick="deleteReport('${r.name}')">Delete</button>
+                        ${r.id ? '<span style="font-weight:bold; color:green; margin-right:10px;">Submitted</span>' : `
+                            <button class="button edit-btn" onclick="showEditModal(${idx}, '${r.name}', '${r.purpose || ''}', '${r.comment || ''}')">Edit</button>
+                            <button class="button delete-btn" onclick="deleteReport('${r.name}')">Delete</button>
+                        `}
                     </div>
                 `;
                 container.appendChild(card);
@@ -144,6 +243,72 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 `;
                 container.appendChild(thumb);
             });
+        }
+
+        function renderTransactions() {
+            const container = document.getElementById('cards-container');
+            container.innerHTML = '';
+            
+            let filtered = [];
+            if (currentCardView === "All Purchasing Cards") {
+                filtered = cardTransactions.filter(t => t.program === "Purchasing Card");
+            } else if (currentCardView === "All Corporate and Personal Cards") {
+                filtered = cardTransactions.filter(t => t.program === "Corporate Card" || t.program === "Personal Card");
+            }
+
+            if (filtered.length === 0) {
+                container.innerHTML = '<p class="no-reports">No transactions found.</p>';
+                return;
+            }
+
+            filtered.forEach(t => {
+                const thumb = document.createElement('div');
+                thumb.className = 'card-transaction-thumbnail card-transaction-row';
+                thumb.onclick = () => showTxModal(t);
+                thumb.innerHTML = `
+                    <span class="receipt-icon">💳</span>
+                    <span class="receipt-name">${t.merchant}</span>
+                    <span style="font-size: 0.8em; color: green; font-weight:bold; display:block;">${t.amount}</span>
+                `;
+                container.appendChild(thumb);
+            });
+        }
+
+        // Details Panel Functions
+        function showReportDetails(r) {
+            document.getElementById('detail-header-title').innerText = r.name;
+            document.getElementById('detail-report-id').innerText = r.id || "REP-DRAFT-8899";
+            document.getElementById('detail-purpose').innerText = r.purpose || "N/A";
+            document.getElementById('detail-comment').innerText = r.comment || "N/A";
+            
+            // Build inline line items mock list
+            const list = document.getElementById('detail-expenses-list');
+            list.innerHTML = `
+                <div class="detail-row"><strong>Date:</strong> 2026-06-12 | <strong>Type:</strong> Lodging | <strong>Amount:</strong> $150.00 | <strong>Merchant:</strong> Hilton</div>
+                <div class="detail-row"><strong>Date:</strong> 2026-06-13 | <strong>Type:</strong> Meal | <strong>Amount:</strong> $45.20 | <strong>Merchant:</strong> Italian Bistro</div>
+            `;
+            
+            document.getElementById('reports-container').style.display = 'none';
+            document.getElementById('report-details-panel').style.display = 'block';
+        }
+
+        function closeReportDetails() {
+            document.getElementById('report-details-panel').style.display = 'none';
+            document.getElementById('reports-container').style.display = 'block';
+        }
+
+        // Transaction Details
+        function showTxModal(t) {
+            document.getElementById('tx-merchant').innerText = t.merchant;
+            document.getElementById('tx-date').innerText = t.date;
+            document.getElementById('tx-amount').innerText = t.amount;
+            document.getElementById('tx-id').innerText = t.id;
+            document.getElementById('tx-program').innerText = t.program;
+            document.getElementById('transaction-modal').style.display = 'block';
+        }
+
+        function closeTxModal() {
+            document.getElementById('transaction-modal').style.display = 'none';
         }
 
         let selectedReceiptName = '';
@@ -234,6 +399,139 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         // Run fetches
         fetchReports();
         fetchReceipts();
+        renderTransactions();
+    </script>
+</body>
+</html>
+"""
+
+DELEGATES_HTML = """<!DOCTYPE html>
+<html>
+<head>
+    <title>Expense Delegates</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; background-color: #f7f9fa; }
+        .delegate-table { width: 100%; border-collapse: collapse; margin-top: 20px; background: white; }
+        .delegate-table th, .delegate-table td { border: 1px solid #e0e5ea; padding: 10px; text-align: left; }
+        .delegate-table th { background-color: #f0f3f6; }
+        .button { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        .btn-add { background-color: #0070d2; color: white; }
+        .btn-delete { background-color: #c23934; color: white; }
+        .btn-save { background-color: #04844b; color: white; margin-top: 15px; }
+        #search-container { display: none; margin-top: 15px; background: white; padding: 15px; border: 1px solid #c9c9c9; border-radius: 4px; }
+        .suggestion-item { padding: 8px; cursor: pointer; }
+        .suggestion-item:hover { background-color: #e0e5ea; }
+    </style>
+</head>
+<body>
+    <h1>Expense Delegates</h1>
+    <div>
+        <button class="button btn-add" id="add-delegate-btn" onclick="showSearch()">Add</button>
+        <button class="button btn-delete" id="delete-delegate-btn" onclick="deleteSelected()">Delete</button>
+    </div>
+    
+    <div id="search-container">
+        <h3>Search for Delegate</h3>
+        <input type="text" id="delegate-search-input" placeholder="Type name or email..." oninput="showSuggestions(this.value)">
+        <div id="suggestions" style="border: 1px solid #ccc; max-height: 100px; overflow-y: auto; display:none;">
+            <div class="suggestion-item" id="suggestion-john" onclick="selectDelegate('John Doe', 'john@example.com')">John Doe (john@example.com)</div>
+            <div class="suggestion-item" id="suggestion-jane" onclick="selectDelegate('Jane Smith', 'jane@example.com')">Jane Smith (jane@example.com)</div>
+        </div>
+    </div>
+
+    <table class="delegate-table" id="delegates-table">
+        <thead>
+            <tr>
+                <th>Select</th>
+                <th>Delegate Name</th>
+                <th>Can Prepare</th>
+                <th>Can Submit Reports</th>
+                <th>Can Approve</th>
+            </tr>
+        </thead>
+        <tbody id="delegates-body">
+            <!-- Statically initialised or dynamic delegates -->
+        </tbody>
+    </table>
+    
+    <button class="button btn-save" id="save-delegates-btn" onclick="saveDelegates()">Save</button>
+
+    <script>
+        let delegates = [];
+
+        async function fetchDelegates() {
+            const res = await fetch('/api/delegates');
+            delegates = await res.json();
+            renderDelegates();
+        }
+
+        function renderDelegates() {
+            const tbody = document.getElementById('delegates-body');
+            tbody.innerHTML = '';
+            delegates.forEach((d, idx) => {
+                const tr = document.createElement('tr');
+                tr.className = 'delegate-row';
+                tr.innerHTML = `
+                    <td><input type="checkbox" class="delegate-select-chk" data-idx="${idx}"></td>
+                    <td class="delegate-name-cell">${d.name} (${d.email})</td>
+                    <td><input type="checkbox" class="perm-prepare" ${d.prepare ? 'checked' : ''}></td>
+                    <td><input type="checkbox" class="perm-submit" ${d.submit ? 'checked' : ''}></td>
+                    <td><input type="checkbox" class="perm-approve" ${d.approve ? 'checked' : ''}></td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function showSearch() {
+            document.getElementById('search-container').style.display = 'block';
+        }
+
+        function showSuggestions(val) {
+            const sug = document.getElementById('suggestions');
+            if (val.length > 1) {
+                sug.style.display = 'block';
+            } else {
+                sug.style.display = 'none';
+            }
+        }
+
+        function selectDelegate(name, email) {
+            delegates.push({ name: name, email: email, prepare: false, submit: false, approve: false });
+            document.getElementById('search-container').style.display = 'none';
+            document.getElementById('delegate-search-input').value = '';
+            document.getElementById('suggestions').style.display = 'none';
+            renderDelegates();
+        }
+
+        function deleteSelected() {
+            const chks = document.querySelectorAll('.delegate-select-chk');
+            let toRemove = [];
+            chks.forEach(chk => {
+                if (chk.checked) {
+                    toRemove.push(parseInt(chk.getAttribute('data-idx')));
+                }
+            });
+            delegates = delegates.filter((d, idx) => !toRemove.includes(idx));
+            renderDelegates();
+        }
+
+        async function saveDelegates() {
+            const rows = document.querySelectorAll('#delegates-body tr');
+            rows.forEach((row, idx) => {
+                delegates[idx].prepare = row.querySelector('.perm-prepare').checked;
+                delegates[idx].submit = row.querySelector('.perm-submit').checked;
+                delegates[idx].approve = row.querySelector('.perm-approve').checked;
+            });
+            
+            await fetch('/api/delegates/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ delegates: delegates })
+            });
+            alert('Saved successfully!');
+        }
+
+        fetchDelegates();
     </script>
 </body>
 </html>
@@ -256,7 +554,6 @@ LOGIN_HTML = """<!DOCTYPE html>
 
 class MockConcurRequestHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
-        # Suppress logging request lines to keep smoke test logs clean
         pass
 
     def do_GET(self):
@@ -270,6 +567,11 @@ class MockConcurRequestHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/html")
             self.end_headers()
             self.wfile.write(DASHBOARD_HTML.encode("utf-8"))
+        elif "profile/editdelegates.asp" in self.path:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(DELEGATES_HTML.encode("utf-8"))
         elif self.path == "/api/reports":
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -280,6 +582,11 @@ class MockConcurRequestHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(json.dumps(RECEIPTS).encode("utf-8"))
+        elif self.path == "/api/delegates":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(DELEGATES).encode("utf-8"))
         elif "/login-submit" in self.path:
             self.send_response(302)
             self.send_header("Location", "/nui/expense")
@@ -338,6 +645,16 @@ class MockConcurRequestHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(json.dumps({"success": True}).encode("utf-8"))
+            
+        elif self.path == "/api/delegates/save":
+            new_delegates = data.get("delegates", [])
+            DELEGATES.clear()
+            DELEGATES.extend(new_delegates)
+            
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"success": True}).encode("utf-8"))
         else:
             self.send_response(404)
             self.end_headers()
@@ -358,6 +675,10 @@ class MockConcurServer:
             {"name": "taxi_receipt.png"},
             {"name": "hotel_receipt.jpg"}
         ]
+        DELEGATES.clear()
+        DELEGATES.append(
+            {"name": "Existing Delegate", "email": "existing@example.com", "prepare": True, "submit": False, "approve": False}
+        )
         
         self.httpd = HTTPServer((self.host, self.port), MockConcurRequestHandler)
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
