@@ -296,4 +296,31 @@ export default function (pi: ExtensionAPI) {
       };
     }
   });
+
+  // 12. Tool: concur_check_session
+  pi.registerTool({
+    name: "concur_check_session",
+    label: "Check Concur Session Validity",
+    description: "Checks whether the currently saved browser session state is active and valid (returns true if authenticated, false otherwise).",
+    parameters: Type.Object({}),
+    async execute(toolCallId, params, signal, onUpdate, ctx) {
+      try {
+        const output = await runCommand(["browser-check-session"]);
+        return {
+          content: [{ type: "text", text: output }],
+          details: { valid: true }
+        };
+      } catch (error: any) {
+        if (error.code === 2) {
+          return {
+            content: [
+              { type: "text", text: `Session is invalid or expired.\n\n${error.message}` }
+            ],
+            details: { valid: false }
+          };
+        }
+        throw error;
+      }
+    }
+  });
 }

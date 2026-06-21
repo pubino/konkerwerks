@@ -232,6 +232,7 @@ The extension is written in TypeScript and is saved at `.pi/extensions/concur.ts
 9. **`concur_add_delegate(name_or_email, permissions)`**: Adds a new expense delegate in settings with specified permissions.
 10. **`concur_remove_delegate(name_or_email)`**: Removes an expense delegate from settings by name or email.
 11. **`concur_nuke_drafts_and_receipts()`**: Deletes all draft reports and available receipts inside Concur (intended for testing cleanup).
+12. **`concur_check_session()`**: Checks whether the currently saved browser session state is active and valid (returns true if authenticated, false if expired or missing).
 
 ### How to Enable
 

@@ -35,6 +35,7 @@ def run_tests():
     group.add_argument("--browser-remove-delegate", type=str, help="Remove an expense delegate by name or email")
     group.add_argument("--browser-reconcile", type=str, help="Reconcile transactions of an expense report by name (uses mock rules or JSON config)")
     group.add_argument("--browser-attach-receipt", type=str, help="Attach a receipt file to a transaction in a report. Specify report name as value.")
+    group.add_argument("--browser-check-session", action="store_true", help="Check whether the currently saved browser session state is valid and active")
 
     # Helper arguments
     parser.add_argument("--filter-view", type=str, default="Last 90 Days", help="Filter view for reports or card transactions (default: 'Last 90 Days' or 'All Corporate and Personal Cards')")
@@ -159,6 +160,30 @@ def run_tests():
             print("To run the draft creator, use: python3 src/cli.py --browser-create")
         except Exception as e:
             print(f"\n[ERROR] Failed to run manual login setup: {str(e)}")
+            sys.exit(1)
+
+    # ----------------------------------------------------
+    # Flow B.2: Browser Check Session Validity
+    # ----------------------------------------------------
+    elif args.browser_check_session:
+        print("=" * 60)
+        print("     SAP Concur Browser Session Status Check")
+        print("=" * 60)
+        try:
+            browser_client = ConcurBrowserClient()
+            result = browser_client.check_session_validity(headless=True)
+            if result.get("authenticated"):
+                print(f"\n[SUCCESS] Authentication is active and valid!")
+                print(f"          Detail: {result.get('reason')}")
+                print("=" * 60)
+            else:
+                print(f"\n[EXPIRED/NOT FOUND] Authentication is NOT valid.")
+                print(f"                    Detail: {result.get('reason')}")
+                print("=" * 60)
+                sys.exit(2)
+        except Exception as e:
+            print(f"\n[ERROR] Failed to execute session status check: {str(e)}")
+            print("=" * 60)
             sys.exit(1)
 
     # ----------------------------------------------------

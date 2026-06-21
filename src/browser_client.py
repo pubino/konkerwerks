@@ -115,6 +115,51 @@ class ConcurBrowserClient:
             browser.close()
             logger.info("Browser closed.")
 
+    def check_session_validity(self, headless: bool = True) -> Dict[str, Any]:
+        """
+        Checks whether the currently saved session file exists and is valid (not expired/redirected to login).
+        Returns a dictionary indicating status: {"success": True, "authenticated": True/False, "reason": str}
+        """
+        if not os.path.exists(self.session_file):
+            return {
+                "success": True,
+                "authenticated": False,
+                "reason": f"Session file '{self.session_file}' does not exist on disk."
+            }
+
+        logger.info(f"Checking session validity using session file: {self.session_file}...")
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=headless)
+            context = browser.new_context(storage_state=self.session_file, viewport={"width": 1280, "height": 800})
+            page = context.new_page()
+
+            try:
+                dashboard_url = f"{self.base_url}/nui/expense"
+                page.goto(dashboard_url, timeout=15000)
+                
+                # Check for login redirection
+                current_url = page.url
+                if "login" in current_url.lower() or "signin" in current_url.lower():
+                    return {
+                        "success": True,
+                        "authenticated": False,
+                        "reason": "Session has expired or credentials have been invalidated (redirected to login page)."
+                    }
+                
+                return {
+                    "success": True,
+                    "authenticated": True,
+                    "reason": "Session is active and valid."
+                }
+            except Exception as e:
+                return {
+                    "success": False,
+                    "authenticated": False,
+                    "reason": f"Network or browser error while checking status: {str(e)}"
+                }
+            finally:
+                browser.close()
+
     def create_draft_report(
         self,
         name: str,

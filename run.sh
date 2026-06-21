@@ -16,6 +16,7 @@ usage() {
     echo "  test-receipts-live    Run Playwright receipts list/delete smoke test on your real Concur account"
     echo "  run-live              Run live API integration test (requires configuring .env)"
     echo "  browser-login         Launch headed browser for manual Concur authentication and save session state"
+    echo "  browser-check-session Check whether the currently saved browser session state is valid and active"
     echo "  browser-query         Run Playwright query to list current reports and receipts (requires session)"
     echo "  browser-create        Run Playwright automation to create a draft report headlessly"
     echo "  browser-create-headed Run Playwright automation to create a draft report visibly (headed)"
@@ -102,6 +103,10 @@ case "$CMD" in
         echo "=== Launching browser login automation ==="
         ensure_venv
         python3 src/cli.py --browser-login
+        ;;
+    browser-check-session)
+        ensure_venv
+        python3 src/cli.py --browser-check-session
         ;;
     browser-query)
         echo "=== Querying reports and receipts via browser ==="
