@@ -12,6 +12,8 @@ usage() {
     echo "  test-local            Run mock unit tests locally on the host"
     echo "  test-docker           Build and run mock unit tests inside Docker container"
     echo "  test-browser-smoke    Run Playwright browser CRUD smoke tests (using local mock server)"
+    echo "  test-reports-live     Run Playwright reports CRUD smoke test on your real Concur account"
+    echo "  test-receipts-live    Run Playwright receipts list/delete smoke test on your real Concur account"
     echo "  run-live              Run live API integration test (requires configuring .env)"
     echo "  browser-login         Launch headed browser for manual Concur authentication and save session state"
     echo "  browser-query         Run Playwright query to list current reports and receipts (requires session)"
@@ -65,6 +67,16 @@ case "$CMD" in
         echo "=== Running Playwright Browser CRUD Smoke Tests ==="
         ensure_venv
         python3 tests/test_browser_smoke.py
+        ;;
+    test-reports-live)
+        echo "=== Running Live Concur Reports Smoke Test ==="
+        ensure_venv
+        python3 tests/smoke_test_reports.py
+        ;;
+    test-receipts-live)
+        echo "=== Running Live Concur Receipts Smoke Test ==="
+        ensure_venv
+        python3 tests/smoke_test_receipts.py "${@:2}"
         ;;
     run-live)
         echo "=== Running live integration test ==="

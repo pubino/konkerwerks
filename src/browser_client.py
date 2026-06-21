@@ -41,7 +41,30 @@ class ConcurBrowserClient:
         except Exception:
             pass
 
-        # Combined selectors representing that the dashboard loading is complete
+        # Smart wait loop: wait until all Concur busy indicators (blue loading dots) disappear
+        try:
+            logger.info("Waiting for all Concur busy indicators to clear...")
+            indicator = page.locator(".sapcnqr-busy-indicator, .spndpkg-full-page-busyIndicator-wrapper")
+            start_time = time.time()
+            page.wait_for_timeout(500)
+            
+            while time.time() - start_time < 30:
+                visible_count = 0
+                count = indicator.count()
+                for i in range(count):
+                    try:
+                        if indicator.nth(i).is_visible():
+                            visible_count += 1
+                    except Exception:
+                        continue
+                if visible_count == 0:
+                    break
+                page.wait_for_timeout(500)
+            logger.info("Concur busy indicators cleared.")
+        except Exception as e:
+            logger.warning(f"Proceeding after busy indicator wait timeout: {str(e)}")
+
+        # Combined selectors representing key elements
         combined_selectors = [
             "#create-report-btn",
             "button:has-text('Create New Report')",
@@ -58,7 +81,7 @@ class ConcurBrowserClient:
         combined_str = ", ".join(combined_selectors)
 
         try:
-            page.locator(combined_str).first.wait_for(state="visible", timeout=30000)
+            page.locator(combined_str).first.wait_for(state="visible", timeout=15000)
             logger.info("Dashboard components loaded and visible.")
         except Exception as e:
             logger.warning(f"Proceeding after dashboard load timeout: {str(e)}")
@@ -379,20 +402,63 @@ class ConcurBrowserClient:
                 else:
                     card.first.click()
                     page.wait_for_timeout(2000)
+                    
+                    # Open 'Report Details' dropdown menu
                     page.get_by_role("button", name="Report Details", exact=False).click()
-                    page.get_by_role("menuitem", name="Edit Report Info", exact=False).click()
+                    page.wait_for_timeout(1000)
+                    
+                    # Locate and click 'Report Header' (or 'Edit Report Info' on legacy UIs)
+                    menu_item = None
+                    menu_selectors = [
+                        lambda p: p.get_by_role("menuitem", name="Report Header", exact=False),
+                        lambda p: p.get_by_role("menuitem", name="Edit Report Info", exact=False),
+                        lambda p: p.locator("text=Report Header"),
+                        lambda p: p.locator("text=Edit Report Info")
+                    ]
+                    for idx, get_sel in enumerate(menu_selectors):
+                        try:
+                            loc = get_sel(page)
+                            if loc.is_visible(timeout=2000):
+                                menu_item = loc
+                                break
+                        except Exception:
+                            continue
+
+                    if not menu_item:
+                        self._take_screenshot(page, "report_header_menuitem_not_found")
+                        raise RuntimeError("Could not locate 'Report Header' dropdown item.")
+                    
+                    menu_item.click()
 
                 page.wait_for_timeout(2000)
                 self._take_screenshot(page, "update_report_dialog")
 
                 # Refill form fields
-                name_input = page.locator("#reportname, input[id*='reportname'], input[id*='ReportName']")
-                name_input.fill(new_name)
+                name_input = page.get_by_role("textbox", name="Report Name", exact=False)
+                if not name_input.is_visible(timeout=2000):
+                    name_input = page.locator("#reportname, input[id*='reportname'], input[id*='ReportName'], input[name*='name']")
+                
+                if name_input.is_visible(timeout=2000):
+                    name_input.fill(new_name)
+                    logger.info(f"Filled Report Name: {new_name}")
+                else:
+                    raise RuntimeError("Could not find standard Report Name input field.")
 
                 if new_purpose:
-                    page.locator("#purpose, textarea[id*='purpose'], input[id*='purpose']").fill(new_purpose)
+                    purpose_input = page.get_by_role("textbox", name="Purpose", exact=False)
+                    if not purpose_input.is_visible(timeout=2000):
+                        purpose_input = page.locator("#purpose, textarea[id*='purpose'], input[id*='purpose']")
+                    if purpose_input.is_visible(timeout=2000):
+                        purpose_input.fill(new_purpose)
+                        logger.info("Filled Purpose field.")
+
                 if new_comment:
-                    page.locator("#comment, textarea[id*='comment']").fill(new_comment)
+                    comment_input = page.get_by_role("textbox", name="Comment", exact=False)
+                    if not comment_input.is_visible(timeout=2000):
+                        comment_input = page.locator("#comment, textarea[id*='comment'], input[id*='comment']")
+                    if comment_input.is_visible(timeout=2000):
+                        comment_input.fill(new_comment)
+                        logger.info("Filled Comment field.")
 
                 self._take_screenshot(page, "update_report_form_filled")
 
@@ -443,11 +509,90 @@ class ConcurBrowserClient:
                 delete_btn = card.get_by_role("button", name="Delete", exact=False)
                 if delete_btn.is_visible(timeout=2000):
                     delete_btn.click()
+                    logger.info("Clicked delete button on card.")
                 else:
-                    checkbox = card.locator("input[type='checkbox'], .sapMCb")
-                    checkbox.first.click()
-                    page.get_by_role("button", name="Delete Report", exact=False).click()
-                    page.get_by_role("button", name="Yes, Delete", exact=False).click()
+                    # In real Concur Fiori: open the report, click three-dot menu, click Delete Report
+                    logger.info("Opening report details page to delete...")
+                    card.first.click()
+                    page.wait_for_timeout(3000)
+                    
+                    # Locate and click the '...' (More Options) button next to 'Submit Report'
+                    more_btn = None
+                    more_selectors = [
+                        lambda p: p.get_by_role("button", name="Report Actions", exact=False),
+                        lambda p: p.get_by_role("button", name="More Actions", exact=False),
+                        lambda p: p.get_by_role("button", name="More Options", exact=False),
+                        lambda p: p.get_by_role("button", name="More", exact=False),
+                        lambda p: p.locator("button:has-text('...')"),
+                        lambda p: p.locator("[class*='more']"),
+                        lambda p: p.locator(".sapMBtnContent:has-text('...')")
+                    ]
+                    for get_sel in more_selectors:
+                        try:
+                            loc = get_sel(page)
+                            if loc.is_visible(timeout=2000):
+                                more_btn = loc
+                                break
+                        except Exception:
+                            continue
+                            
+                    if not more_btn:
+                        self._take_screenshot(page, "more_options_button_not_found")
+                        raise RuntimeError("Could not locate three-dot (More Actions) button inside report.")
+                        
+                    more_btn.click()
+                    page.wait_for_timeout(1000)
+                    self._take_screenshot(page, "more_options_menu_open")
+                    
+                    # Click 'Delete Report' or 'Delete'
+                    delete_item = None
+                    delete_item_selectors = [
+                        lambda p: p.get_by_role("menuitem", name="Delete Report", exact=False),
+                        lambda p: p.get_by_role("menuitem", name="Delete", exact=False),
+                        lambda p: p.locator("text=Delete Report"),
+                        lambda p: p.locator("text=Delete")
+                    ]
+                    for get_sel in delete_item_selectors:
+                        try:
+                            loc = get_sel(page)
+                            if loc.is_visible(timeout=2000):
+                                delete_item = loc
+                                break
+                        except Exception:
+                            continue
+                            
+                    if not delete_item:
+                        raise RuntimeError("Could not locate 'Delete Report' menu item.")
+                        
+                    delete_item.click()
+                    logger.info("Clicked 'Delete Report' menu item.")
+                    
+                    # Confirm popup if not handled automatically
+                    try:
+                        confirm_selectors = [
+                            lambda p: p.get_by_role("button", name="Delete Report", exact=True),
+                            lambda p: p.get_by_role("button", name="Delete", exact=True),
+                            lambda p: p.get_by_role("button", name="Yes, Delete", exact=False),
+                            lambda p: p.locator(".sapcnqr-button--primary:has-text('Delete Report')"),
+                            lambda p: p.locator("button:has-text('Delete Report')").last
+                        ]
+                        confirm_btn = None
+                        for get_sel in confirm_selectors:
+                            try:
+                                loc = get_sel(page)
+                                if loc.is_visible(timeout=2000):
+                                    confirm_btn = loc
+                                    break
+                            except Exception:
+                                continue
+
+                        if confirm_btn:
+                            confirm_btn.click()
+                            logger.info("Clicked confirmation button.")
+                        else:
+                            logger.warning("No confirmation button matched/visible.")
+                    except Exception as ce:
+                        logger.warning(f"Error handling confirmation: {str(ce)}")
 
                 page.wait_for_timeout(3000)
                 self._take_screenshot(page, "delete_report_post")
