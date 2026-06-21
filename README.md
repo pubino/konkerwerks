@@ -67,6 +67,8 @@ Build the Python environment, install requirements, and download Playwright chro
 | **Card Transaction Details** | `./run.sh browser-card-details "Merchant/ID" [filter]` | Fetch details for a card transaction by name or ID. |
 | **Add Expense Delegate** | `./run.sh browser-add-delegate "Name" [perms...]` | Add delegate and assign permissions (prepare, submit, approve). |
 | **Remove Expense Delegate** | `./run.sh browser-remove-delegate "Name"` | Remove expense delegate from settings page. |
+| **Reconcile Report** | `./run.sh browser-reconcile "Name" [rules.json]` | Reconcile report transactions with rules and submit. |
+| **Attach Receipt to Transaction** | `./run.sh browser-attach-receipt "Name" "Merchant" "receipt.pdf"` | Attach local receipt file directly to a transaction row in a report. |
 
 ---
 
@@ -158,6 +160,46 @@ Automates adding and removing delegates, plus managing permissions in the profil
   Remove a delegate by selecting their checkbox, triggering 'Delete', and saving the profiles page.
   ```bash
   ./run.sh browser-remove-delegate "John Doe"
+  ```
+
+### 4. Month-End Expense Reconciliation
+
+Reconciliation is a critical month-end task. The client navigates inside a report, reads the merchant list, and maps matching rules to fill in Expense Types, Business Purposes, Comments, and Allocation Codes for every transaction row before submitting the report.
+
+* **Reconcile and Submit Report:**
+  ```bash
+  # Reconcile using default built-in matching rules
+  ./run.sh browser-reconcile "Reconciliation Report A"
+  
+  # Or provide a custom JSON file defining your accounting code mapping rules
+  ./run.sh browser-reconcile "Reconciliation Report A" my_recon_rules.json
+  ```
+  
+  *Example `my_recon_rules.json` file:*
+  ```json
+  {
+    "Uber": {
+      "expense_type": "Ground Transportation",
+      "business_purpose": "Client travel to office",
+      "comment": "Uber Ride",
+      "allocation_code": "COST-CENTER-101"
+    },
+    "Office Depot": {
+      "expense_type": "Office Supplies",
+      "business_purpose": "Team whiteboard supplies",
+      "comment": "Pens and notebooks",
+      "allocation_code": "COST-CENTER-102"
+    }
+  }
+  ```
+
+### 5. Match & Attach Receipt Directly to Transaction
+
+Matching receipt PDFs or images to individual card transactions can be automated. Playwright navigates into the expense report detail row matching your merchant name, locates the hidden file input element, and uploads the local file.
+
+* **Attach Local Receipt to Report Expense:**
+  ```bash
+  ./run.sh browser-attach-receipt "Receipt Upload Report A" "Uber" "receipts/uber_ride_receipt.pdf"
   ```
 
 ---

@@ -217,6 +217,68 @@ def run_browser_smoke_test():
         assert rem_del_res["success"] is True, "Expected delegate removal to succeed"
         print("         [PASS] Expense delegate 'John Doe' successfully removed.")
 
+        # ----------------------------------------------------
+        # 16. NEW FEATURE: Reconcile Report Transactions (Month-End)
+        # ----------------------------------------------------
+        print("\n[Step 16] Creating report and reconciling its transactions...")
+        client.create_draft_report(
+            name="Reconciliation Report A",
+            purpose="Reconcile Test",
+            comment="Test Comment",
+            headless=True
+        )
+        
+        recon_rules = {
+            "Uber": {
+                "expense_type": "Ground Transportation",
+                "business_purpose": "Client dinner ride",
+                "comment": "Uber Ride",
+                "allocation_code": "COST-01"
+            },
+            "Office Depot": {
+                "expense_type": "Office Supplies",
+                "business_purpose": "Team materials",
+                "comment": "Pens and notebooks",
+                "allocation_code": "COST-02"
+            }
+        }
+        recon_res = client.reconcile_report(
+            report_name="Reconciliation Report A",
+            reconciliation_rules=recon_rules,
+            headless=True
+        )
+        assert recon_res["success"] is True, "Expected reconciliation to succeed"
+        print("         [PASS] Report transactions reconciled and report submitted successfully.")
+
+        # ----------------------------------------------------
+        # 17. NEW FEATURE: Attach Receipt directly to Report transaction
+        # ----------------------------------------------------
+        print("\n[Step 17] Creating draft report and attaching a receipt directly to transaction...")
+        client.create_draft_report(
+            name="Receipt Upload Report A",
+            purpose="Direct Receipt Upload Test",
+            comment="Test direct attachment",
+            headless=True
+        )
+        
+        # Create a dummy file on the host to upload
+        dummy_receipt = "tests/dummy_receipt.pdf"
+        with open(dummy_receipt, "w") as f:
+            f.write("MOCK RECEIPT CONTENT")
+            
+        try:
+            attach_res = client.attach_receipt_to_transaction(
+                report_name="Receipt Upload Report A",
+                merchant_or_id="Uber",
+                receipt_file_path=dummy_receipt,
+                headless=True
+            )
+            assert attach_res["success"] is True, "Expected receipt upload to succeed"
+            print("         [PASS] Direct receipt attachment verified.")
+        finally:
+            if os.path.exists(dummy_receipt):
+                os.remove(dummy_receipt)
+
         print("\n" + "=" * 60)
         print(" [SUCCESS] BROWSER CRUD & RECEIPT SMOKE TEST PASSED SUCCESSFULLY!")
         print("=" * 60 + "\n")

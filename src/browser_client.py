@@ -1407,3 +1407,154 @@ class ConcurBrowserClient:
                 raise e
             finally:
                 browser.close()
+
+    def reconcile_report(self, report_name: str, reconciliation_rules: Dict[str, Dict[str, str]], headless: bool = True) -> Dict[str, Any]:
+        """
+        Automates month-end reconciliation: opens the report details view,
+        iterates over all transaction rows, matches them with reconciliation rules,
+        inputs Expense Type, Business Purpose, Comment, and Allocation Codes,
+        saves each row, and submits the entire report when all are reconciled.
+        """
+        logger.info(f"Starting month-end reconciliation for report '{report_name}' via browser (headless={headless})...")
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=headless)
+            context = browser.new_context(storage_state=self.session_file, viewport={"width": 1280, "height": 800})
+            page = context.new_page()
+
+            try:
+                page.goto(f"{self.base_url}/nui/expense", timeout=30000)
+                self._wait_for_dashboard(page)
+                self._take_screenshot(page, "reconcile_start")
+
+                # Locate and open the report
+                card = page.locator(".report-tile, .report-card").filter(has_text=report_name).first
+                if card.count() == 0:
+                    card = page.locator(".sapMCard, .sapMLIB").filter(has_text=report_name).first
+                if card.count() == 0:
+                    raise FileNotFoundError(f"Could not find report '{report_name}'.")
+
+                card.click()
+                page.wait_for_timeout(3000)
+                self._wait_for_dashboard(page)
+                self._take_screenshot(page, "reconcile_opened_report")
+
+                # Iterate through reconciliation rows
+                rows = page.locator(".transaction-recon-row, .detail-row").all()
+                logger.info(f"Discovered {len(rows)} line item(s) to reconcile.")
+
+                for idx, row in enumerate(rows):
+                    merchant_elem = row.locator(".recon-merchant, strong").first
+                    if merchant_elem.count() == 0:
+                        continue
+                    
+                    raw_text = merchant_elem.text_content().strip()
+                    logger.info(f"Checking line item {idx+1}: '{raw_text}'...")
+
+                    # Match with rule key (case insensitive)
+                    matched_rule = None
+                    for key, rule in reconciliation_rules.items():
+                        if key.lower() in raw_text.lower():
+                            matched_rule = rule
+                            break
+
+                    if not matched_rule:
+                        logger.warning(f"No reconciliation rule matched for '{raw_text}'. Skipping.")
+                        continue
+
+                    logger.info(f"Reconciling item '{raw_text}' using rule: {matched_rule}")
+                    
+                    # Fill inputs
+                    sel_type = row.locator("select.recon-type")
+                    if sel_type.count() > 0:
+                        sel_type.select_option(label=matched_rule.get("expense_type", ""))
+                    
+                    inp_purpose = row.locator("input.recon-purpose")
+                    if inp_purpose.count() > 0:
+                        inp_purpose.fill(matched_rule.get("business_purpose", ""))
+                    
+                    inp_comment = row.locator("input.recon-comment")
+                    if inp_comment.count() > 0:
+                        inp_comment.fill(matched_rule.get("comment", ""))
+                    
+                    inp_alloc = row.locator("input.recon-allocation")
+                    if inp_alloc.count() > 0:
+                        inp_alloc.fill(matched_rule.get("allocation_code", ""))
+                    
+                    # Save this transaction
+                    save_btn = row.locator("button.recon-save-btn").first
+                    if save_btn.count() > 0:
+                        save_btn.click()
+                        page.wait_for_timeout(2000)
+                        logger.info("Saved transaction reconciliation fields.")
+
+                self._take_screenshot(page, "reconcile_all_saved")
+
+                # Click Submit Report
+                submit_btn = page.locator("#submit-entire-report-btn").first
+                if submit_btn.count() > 0 and submit_btn.is_enabled():
+                    # Register dialog accept handler
+                    page.on("dialog", lambda dialog: dialog.accept())
+                    submit_btn.click()
+                    page.wait_for_timeout(3000)
+                    self._take_screenshot(page, "reconcile_submitted")
+                    logger.info("Report successfully submitted!")
+                    return {"success": True}
+                else:
+                    raise RuntimeError("Submit Report button is missing or not enabled. Check if all transactions are reconciled.")
+
+            except Exception as e:
+                self._take_screenshot(page, "reconcile_error")
+                raise e
+            finally:
+                browser.close()
+
+    def attach_receipt_to_transaction(self, report_name: str, merchant_or_id: str, receipt_file_path: str, headless: bool = True) -> Dict[str, Any]:
+        """
+        Navigates to the report details view, locates the transaction row matching merchant_or_id,
+        and uploads a local receipt file (PDF/image) to match/associate it with the transaction.
+        """
+        logger.info(f"Attaching receipt '{receipt_file_path}' to transaction matching '{merchant_or_id}' in report '{report_name}'...")
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=headless)
+            context = browser.new_context(storage_state=self.session_file, viewport={"width": 1280, "height": 800})
+            page = context.new_page()
+
+            try:
+                page.goto(f"{self.base_url}/nui/expense", timeout=30000)
+                self._wait_for_dashboard(page)
+                self._take_screenshot(page, "attach_receipt_start")
+
+                # Locate and open the report
+                card = page.locator(".report-tile, .report-card").filter(has_text=report_name).first
+                if card.count() == 0:
+                    card = page.locator(".sapMCard, .sapMLIB").filter(has_text=report_name).first
+                if card.count() == 0:
+                    raise FileNotFoundError(f"Could not find report '{report_name}'.")
+
+                card.click()
+                page.wait_for_timeout(3000)
+                self._wait_for_dashboard(page)
+                self._take_screenshot(page, "attach_receipt_report_opened")
+
+                # Find the transaction row matching merchant_or_id
+                row = page.locator(".transaction-recon-row, .detail-row").filter(has_text=merchant_or_id).first
+                if row.count() == 0:
+                    raise FileNotFoundError(f"Could not find transaction matching '{merchant_or_id}'.")
+
+                # Locate file input element and upload the file
+                input_file = row.locator("input.recon-receipt-file")
+                if input_file.count() == 0:
+                    raise RuntimeError("Could not find file input for receipt upload.")
+
+                input_file.set_input_files(receipt_file_path)
+                page.wait_for_timeout(3000)
+
+                self._take_screenshot(page, "attach_receipt_completed")
+                logger.info(f"Successfully attached receipt '{receipt_file_path}' to transaction!")
+                return {"success": True}
+
+            except Exception as e:
+                self._take_screenshot(page, "attach_receipt_error")
+                raise e
+            finally:
+                browser.close()

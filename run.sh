@@ -29,6 +29,8 @@ usage() {
     echo "  browser-card-details \"Merchant/ID\" [filter] Get detailed view of a card transaction by merchant or ID"
     echo "  browser-add-delegate \"Name or Email\" [perms...] Add a new expense delegate (permissions: prepare, submit, approve)"
     echo "  browser-remove-delegate \"Name or Email\" Remove an expense delegate"
+    echo "  browser-reconcile \"Name\" [rules.json] Reconcile and submit expense report transactions"
+    echo "  browser-attach-receipt \"Name\" \"Merchant\" \"receipt.pdf\" Attach a local receipt file to a report transaction"
     exit 1
 }
 
@@ -192,6 +194,28 @@ case "$CMD" in
         fi
         ensure_venv
         python3 src/cli.py --browser-remove-delegate "$2"
+        ;;
+    browser-reconcile)
+        if [ $# -lt 2 ]; then
+            echo "Error: Please specify the report name to reconcile."
+            echo "Usage: ./run.sh browser-reconcile \"Report Name\" [rules.json]"
+            exit 1
+        fi
+        ensure_venv
+        if [ $# -ge 3 ]; then
+            python3 src/cli.py --browser-reconcile "$2" --reconcile-rules "$3"
+        else
+            python3 src/cli.py --browser-reconcile "$2"
+        fi
+        ;;
+    browser-attach-receipt)
+        if [ $# -lt 4 ]; then
+            echo "Error: Please specify report name, merchant name, and local receipt file path."
+            echo "Usage: ./run.sh browser-attach-receipt \"Report Name\" \"Merchant Name\" \"receipt.pdf\""
+            exit 1
+        fi
+        ensure_venv
+        python3 src/cli.py --browser-attach-receipt "$2" --merchant "$3" --receipt-path "$4"
         ;;
     *)
         usage

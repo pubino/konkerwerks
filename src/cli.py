@@ -33,10 +33,15 @@ def run_tests():
     group.add_argument("--browser-card-details", type=str, help="Get detailed view of a card transaction by merchant or ID")
     group.add_argument("--browser-add-delegate", type=str, help="Add a new expense delegate by name or email")
     group.add_argument("--browser-remove-delegate", type=str, help="Remove an expense delegate by name or email")
+    group.add_argument("--browser-reconcile", type=str, help="Reconcile transactions of an expense report by name (uses mock rules or JSON config)")
+    group.add_argument("--browser-attach-receipt", type=str, help="Attach a receipt file to a transaction in a report. Specify report name as value.")
 
     # Helper arguments
     parser.add_argument("--filter-view", type=str, default="Last 90 Days", help="Filter view for reports or card transactions (default: 'Last 90 Days' or 'All Corporate and Personal Cards')")
     parser.add_argument("--delegate-perms", nargs="+", default=["prepare"], help="Permissions for delegate adding (prepare, submit, approve) (default: ['prepare'])")
+    parser.add_argument("--reconcile-rules", type=str, help="Path to a JSON file containing reconciliation rules")
+    parser.add_argument("--merchant", type=str, help="Merchant name or transaction ID to match receipt against")
+    parser.add_argument("--receipt-path", type=str, help="Local file path of the receipt (PDF or image)")
 
     args = parser.parse_args()
 
@@ -439,6 +444,80 @@ def run_tests():
             print("=" * 60)
         except Exception as e:
             print(f"\n[ERROR] Failed to remove delegate: {str(e)}")
+            print("=" * 60)
+            sys.exit(1)
+
+    # ----------------------------------------------------
+    # Flow O: Reconcile Report Transactions
+    # ----------------------------------------------------
+    elif args.browser_reconcile:
+        report_name = args.browser_reconcile
+        rules_path = args.reconcile_rules
+        import json
+        
+        reconciliation_rules = {
+            "Uber": {
+                "expense_type": "Ground Transportation",
+                "business_purpose": "Client dinner ride",
+                "comment": "Uber Ride",
+                "allocation_code": "COST-01"
+            },
+            "Office Depot": {
+                "expense_type": "Office Supplies",
+                "business_purpose": "Team materials",
+                "comment": "Pens and notebooks",
+                "allocation_code": "COST-02"
+            }
+        }
+        
+        if rules_path:
+            try:
+                with open(rules_path, "r") as f:
+                    reconciliation_rules = json.load(f)
+            except Exception as e:
+                print(f"[ERROR] Failed to load reconciliation rules JSON from '{rules_path}': {str(e)}")
+                sys.exit(1)
+                
+        print("=" * 60)
+        print(f"     SAP Concur Report Reconciliation: '{report_name}'")
+        print("=" * 60)
+        try:
+            browser_client = ConcurBrowserClient()
+            browser_client.reconcile_report(report_name=report_name, reconciliation_rules=reconciliation_rules, headless=True)
+            print(f"\n[SUCCESS] Report '{report_name}' reconciled and submitted successfully!")
+            print("=" * 60)
+        except Exception as e:
+            print(f"\n[ERROR] Reconciliation failed: {str(e)}")
+            print("=" * 60)
+            sys.exit(1)
+
+    # ----------------------------------------------------
+    # Flow P: Attach Receipt to Transaction
+    # ----------------------------------------------------
+    elif args.browser_attach_receipt:
+        report_name = args.browser_attach_receipt
+        merchant = args.merchant
+        receipt_path = args.receipt_path
+
+        if not merchant or not receipt_path:
+            print("[ERROR] Please specify both --merchant and --receipt-path when attaching a receipt.")
+            sys.exit(1)
+
+        print("=" * 60)
+        print(f"     SAP Concur Attach Receipt: '{receipt_path}' to '{merchant}' in '{report_name}'")
+        print("=" * 60)
+        try:
+            browser_client = ConcurBrowserClient()
+            browser_client.attach_receipt_to_transaction(
+                report_name=report_name,
+                merchant_or_id=merchant,
+                receipt_file_path=receipt_path,
+                headless=True
+            )
+            print(f"\n[SUCCESS] Receipt '{receipt_path}' attached successfully!")
+            print("=" * 60)
+        except Exception as e:
+            print(f"\n[ERROR] Failed to attach receipt: {str(e)}")
             print("=" * 60)
             sys.exit(1)
 

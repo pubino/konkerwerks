@@ -79,7 +79,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             <div class="detail-row"><strong>Date:</strong> 2026-06-12 | <strong>Type:</strong> Lodging | <strong>Amount:</strong> $150.00 | <strong>Merchant:</strong> Hilton</div>
             <div class="detail-row"><strong>Date:</strong> 2026-06-13 | <strong>Type:</strong> Meal | <strong>Amount:</strong> $45.20 | <strong>Merchant:</strong> Italian Bistro</div>
         </div>
-        <button class="button" onclick="closeReportDetails()" style="margin-top:15px; background:#e0e5ea;">Back to List</button>
+        <div id="report-detail-actions">
+            <button class="button" onclick="closeReportDetails()" style="margin-top:15px; background:#e0e5ea;">Back to List</button>
+        </div>
     </div>
 
     <h2 class="section-title">Available Expenses (Card Transactions)</h2>
@@ -281,15 +283,117 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             document.getElementById('detail-purpose').innerText = r.purpose || "N/A";
             document.getElementById('detail-comment').innerText = r.comment || "N/A";
             
-            // Build inline line items mock list
             const list = document.getElementById('detail-expenses-list');
-            list.innerHTML = `
-                <div class="detail-row"><strong>Date:</strong> 2026-06-12 | <strong>Type:</strong> Lodging | <strong>Amount:</strong> $150.00 | <strong>Merchant:</strong> Hilton</div>
-                <div class="detail-row"><strong>Date:</strong> 2026-06-13 | <strong>Type:</strong> Meal | <strong>Amount:</strong> $45.20 | <strong>Merchant:</strong> Italian Bistro</div>
-            `;
+            list.innerHTML = '';
+            
+            const txs = r.transactions || [];
+            if (txs.length === 0) {
+                list.innerHTML = `
+                    <div class="detail-row"><strong>Date:</strong> 2026-06-12 | <strong>Type:</strong> Lodging | <strong>Amount:</strong> $150.00 | <strong>Merchant:</strong> Hilton</div>
+                    <div class="detail-row"><strong>Date:</strong> 2026-06-13 | <strong>Type:</strong> Meal | <strong>Amount:</strong> $45.20 | <strong>Merchant:</strong> Italian Bistro</div>
+                `;
+                const actionContainer = document.getElementById('report-detail-actions');
+                actionContainer.innerHTML = `<button class="button" onclick="closeReportDetails()" style="margin-top:15px; background:#e0e5ea;">Back to List</button>`;
+            } else {
+                txs.forEach((t, idx) => {
+                    const row = document.createElement('div');
+                    row.className = 'detail-row transaction-recon-row';
+                    row.style.display = 'flex';
+                    row.style.gap = '10px';
+                    row.style.alignItems = 'center';
+                    row.style.marginBottom = '10px';
+                    row.innerHTML = `
+                        <div style="width: 120px; font-weight: bold;" class="recon-merchant">${t.merchant} (${t.amount})</div>
+                        <select class="recon-type" style="width: 120px;" id="recon-type-${idx}">
+                            <option value="">Expense Type...</option>
+                            <option value="Ground Transportation" ${t.expense_type === 'Ground Transportation' ? 'selected' : ''}>Ground Transportation</option>
+                            <option value="Office Supplies" ${t.expense_type === 'Office Supplies' ? 'selected' : ''}>Office Supplies</option>
+                            <option value="Lodging" ${t.expense_type === 'Lodging' ? 'selected' : ''}>Lodging</option>
+                            <option value="Meal" ${t.expense_type === 'Meal' ? 'selected' : ''}>Meal</option>
+                        </select>
+                        <input type="text" class="recon-purpose" style="width: 120px;" placeholder="Purpose" value="${t.business_purpose || ''}" id="recon-purpose-${idx}">
+                        <input type="text" class="recon-comment" style="width: 120px;" placeholder="Comment" value="${t.comment || ''}" id="recon-comment-${idx}">
+                        <input type="text" class="recon-allocation" style="width: 80px;" placeholder="Code" value="${t.allocation_code || ''}" id="recon-allocation-${idx}">
+                        <input type="file" class="recon-receipt-file" style="display:none;" id="recon-receipt-file-${idx}" onchange="uploadReceiptForTransaction('${r.name}', ${idx}, this.files[0].name)">
+                        <button type="button" class="button recon-attach-btn" style="background-color: #0070d2; color: white;" onclick="document.getElementById('recon-receipt-file-${idx}').click()">Attach Receipt</button>
+                        <button type="button" class="button recon-save-btn" style="background-color: #04844b; color: white;" onclick="saveReconTransaction('${r.name}', ${idx})">Save</button>
+                        <div style="display: flex; flex-direction: column; font-size: 11px;">
+                            ${t.reconciled ? '<span style="color: green; font-weight: bold;" class="recon-status">✓ Reconciled</span>' : '<span style="color: red;" class="recon-status">Pending</span>'}
+                            ${t.receipt ? `<span style="color: blue;" class="receipt-attached-name">Attached: ${t.receipt}</span>` : ''}
+                        </div>
+                    `;
+                    list.appendChild(row);
+                });
+                
+                const allReconciled = txs.every(t => t.reconciled);
+                const actionContainer = document.getElementById('report-detail-actions');
+                actionContainer.innerHTML = `
+                    <button class="button" onclick="closeReportDetails()" style="margin-top:15px; background:#e0e5ea; margin-right: 10px;">Back to List</button>
+                    <button id="submit-entire-report-btn" class="button" style="margin-top:15px; background-color: ${allReconciled ? '#0070d2' : '#c9c9c9'}; color: white;" ${allReconciled ? '' : 'disabled'} onclick="submitReport('${r.name}')">Submit Report</button>
+                `;
+            }
             
             document.getElementById('reports-container').style.display = 'none';
             document.getElementById('report-details-panel').style.display = 'block';
+        }
+
+        async function saveReconTransaction(reportName, idx) {
+            const expense_type = document.getElementById(`recon-type-${idx}`).value;
+            const business_purpose = document.getElementById(`recon-purpose-${idx}`).value;
+            const comment = document.getElementById(`recon-comment-${idx}`).value;
+            const allocation_code = document.getElementById(`recon-allocation-${idx}`).value;
+            
+            await fetch('/api/reports/reconcile_transaction', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    report_name: reportName,
+                    index: idx,
+                    expense_type: expense_type,
+                    business_purpose: business_purpose,
+                    comment: comment,
+                    allocation_code: allocation_code
+                })
+            });
+            
+            const res = await fetch('/api/reports');
+            reportsData = await res.json();
+            
+            const updatedReport = reportsData.find(r => r.name === reportName);
+            if (updatedReport) {
+                showReportDetails(updatedReport);
+            }
+        }
+
+        async function uploadReceiptForTransaction(reportName, idx, fileName) {
+            await fetch('/api/reports/attach_receipt', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    report_name: reportName,
+                    index: idx,
+                    receipt_name: fileName
+                })
+            });
+            
+            const res = await fetch('/api/reports');
+            reportsData = await res.json();
+            
+            const updatedReport = reportsData.find(r => r.name === reportName);
+            if (updatedReport) {
+                showReportDetails(updatedReport);
+            }
+        }
+
+        async function submitReport(reportName) {
+            await fetch('/api/reports/submit', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ report_name: reportName })
+            });
+            alert('Report submitted successfully!');
+            closeReportDetails();
+            fetchReports();
         }
 
         function closeReportDetails() {
@@ -609,9 +713,62 @@ class MockConcurRequestHandler(BaseHTTPRequestHandler):
             name = data.get("name", "Unnamed")
             purpose = data.get("purpose", "")
             comment = data.get("comment", "")
-            REPORTS.append({"name": name, "purpose": purpose, "comment": comment})
+            REPORTS.append({
+                "name": name,
+                "purpose": purpose,
+                "comment": comment,
+                "status": "Draft",
+                "transactions": [
+                    {"id": "TX_REP_1", "merchant": "Uber", "amount": "$24.50", "expense_type": "", "business_purpose": "", "comment": "", "allocation_code": "", "reconciled": False},
+                    {"id": "TX_REP_2", "merchant": "Office Depot", "amount": "$189.99", "expense_type": "", "business_purpose": "", "comment": "", "allocation_code": "", "reconciled": False}
+                ]
+            })
             
             self.send_response(201)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"success": True}).encode("utf-8"))
+
+        elif self.path == "/api/reports/reconcile_transaction":
+            report_name = data.get("report_name")
+            tx_idx = data.get("index")
+            for r in REPORTS:
+                if r["name"] == report_name:
+                    txs = r.get("transactions", [])
+                    if 0 <= tx_idx < len(txs):
+                        txs[tx_idx]["expense_type"] = data.get("expense_type", "")
+                        txs[tx_idx]["business_purpose"] = data.get("business_purpose", "")
+                        txs[tx_idx]["comment"] = data.get("comment", "")
+                        txs[tx_idx]["allocation_code"] = data.get("allocation_code", "")
+                        txs[tx_idx]["reconciled"] = True
+            
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"success": True}).encode("utf-8"))
+
+        elif self.path == "/api/reports/attach_receipt":
+            report_name = data.get("report_name")
+            tx_idx = data.get("index")
+            receipt_name = data.get("receipt_name")
+            for r in REPORTS:
+                if r["name"] == report_name:
+                    txs = r.get("transactions", [])
+                    if 0 <= tx_idx < len(txs):
+                        txs[tx_idx]["receipt"] = receipt_name
+            
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"success": True}).encode("utf-8"))
+
+        elif self.path == "/api/reports/submit":
+            report_name = data.get("report_name")
+            for r in REPORTS:
+                if r["name"] == report_name:
+                    r["status"] = "Submitted"
+            
+            self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(json.dumps({"success": True}).encode("utf-8"))
