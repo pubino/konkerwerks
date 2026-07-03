@@ -499,6 +499,7 @@ class ConcurBrowserClient:
 
             except Exception as e:
                 logger.error(f"Error listing reports: {str(e)}")
+                raise e
             finally:
                 browser.close()
             return reports
@@ -808,6 +809,7 @@ class ConcurBrowserClient:
 
             except Exception as e:
                 logger.error(f"Error listing receipts: {str(e)}")
+                raise e
             finally:
                 browser.close()
             return list(set(receipts))
@@ -1532,6 +1534,7 @@ class ConcurBrowserClient:
 
             except Exception as e:
                 logger.error(f"Error listing card transactions: {str(e)}")
+                raise e
             finally:
                 browser.close()
             return transactions
