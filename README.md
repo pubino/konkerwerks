@@ -18,7 +18,7 @@ It supports two modes of interaction:
 
 ### For Browser-Based Automation
 1. **Login Credentials**: Standard Concur username/password or SSO login.
-2. **Playwright Setup**: Playwright must be installed locally along with chromium binaries (handled automatically by `./run.sh setup`).
+2. **Playwright Setup**: Playwright must be installed locally along with chromium binaries (handled automatically by `./kkw setup`).
 
 ---
 
@@ -44,7 +44,7 @@ CONCUR_USER_LOGIN_ID=target_user_email@company.com
 Build the Python environment, install requirements, and download Playwright chromium browser binaries:
 
 ```bash
-./run.sh setup
+./kkw setup
 ```
 
 ---
@@ -55,20 +55,20 @@ Build the Python environment, install requirements, and download Playwright chro
 
 | Run Mode | Command | Scope / Notes |
 | :--- | :--- | :--- |
-| **Containerized Unit Tests** | `./run.sh test-docker` | Runs mock tests in Docker (Offline, credentials not needed). |
-| **Local Unit Tests** | `./run.sh test-local` | Runs mock tests locally using `.venv`. |
-| **Live API Test** | `./run.sh run-live` | Tests token retrieval, report listing, and report creation. |
-| **Headed Browser Login** | `./run.sh browser-login` | Boots browser window for manual login, saves authentication state. |
-| **Headless Browser Creation**| `./run.sh browser-create` | Programmatically logs in using saved state and creates a draft report. |
-| **Visible Browser Creation** | `./run.sh browser-create-headed` | Performs browser creation visibly on screen (useful for debugging). |
-| **List Historical Reports** | `./run.sh browser-query-old [filter]` | Query and list historical reports (e.g. "Last 90 Days"). |
-| **Report Details** | `./run.sh browser-report-details "Name" [filter]` | Fetch line-item details of a specific report. |
-| **List Card Transactions** | `./run.sh browser-list-cards [filter]` | List credit card transactions under specific activity filters. |
-| **Card Transaction Details** | `./run.sh browser-card-details "Merchant/ID" [filter]` | Fetch details for a card transaction by name or ID. |
-| **Add Expense Delegate** | `./run.sh browser-add-delegate "Name" [perms...]` | Add delegate and assign permissions (prepare, submit, approve). |
-| **Remove Expense Delegate** | `./run.sh browser-remove-delegate "Name"` | Remove expense delegate from settings page. |
-| **Reconcile Report** | `./run.sh browser-reconcile "Name" [rules.json] [--submit]` | Reconcile report transactions with rules (review-only by default). |
-| **Attach Receipt to Transaction** | `./run.sh browser-attach-receipt "Name" "Merchant" "receipt.pdf"` | Attach local receipt file directly to a transaction row in a report. |
+| **Containerized Unit Tests** | `./kkw test-docker` | Runs mock tests in Docker (Offline, credentials not needed). |
+| **Local Unit Tests** | `./kkw test-local` | Runs mock tests locally using `.venv`. |
+| **Live API Test** | `./kkw run-live` | Tests token retrieval, report listing, and report creation. |
+| **Headed Browser Login** | `./kkw login` | Boots browser window for manual login, saves authentication state. |
+| **Headless Browser Creation**| `./kkw create` | Programmatically logs in using saved state and creates a draft report. |
+| **Visible Browser Creation** | `./kkw create-headed` | Performs browser creation visibly on screen (useful for debugging). |
+| **List Historical Reports** | `./kkw query-old [filter]` | Query and list historical reports (e.g. "Last 90 Days"). |
+| **Report Details** | `./kkw report-details "Name" [filter]` | Fetch line-item details of a specific report. |
+| **List Card Transactions** | `./kkw list-cards [filter]` | List credit card transactions under specific activity filters. |
+| **Card Transaction Details** | `./kkw card-details "Merchant/ID" [filter]` | Fetch details for a card transaction by name or ID. |
+| **Add Expense Delegate** | `./kkw add-delegate "Name" [perms...]` | Add delegate and assign permissions (prepare, submit, approve). |
+| **Remove Expense Delegate** | `./kkw remove-delegate "Name"` | Remove expense delegate from settings page. |
+| **Reconcile Report** | `./kkw reconcile "Name" [rules.json] [--submit]` | Reconcile report transactions with rules (review-only by default). |
+| **Attach Receipt to Transaction** | `./kkw attach-receipt "Name" "Merchant" "receipt.pdf"` | Attach local receipt file directly to a transaction row in a report. |
 
 ---
 
@@ -81,10 +81,10 @@ Concur separates active draft reports from older, submitted, or processed report
 * **List Old Reports:**
   ```bash
   # Query using the default 'Last 90 Days' filter
-  ./run.sh browser-query-old
+  ./kkw query-old
   
   # Specify a custom filter (e.g., 'All Reports')
-  ./run.sh browser-query-old "All Reports"
+  ./kkw query-old "All Reports"
   ```
   *Output Example:*
   ```text
@@ -96,7 +96,7 @@ Concur separates active draft reports from older, submitted, or processed report
 * **Get Report Details:**
   ```bash
   # Get line items and header details for a specific report
-  ./run.sh browser-report-details "Old Lodging Report 2025" "Last 90 Days"
+  ./kkw report-details "Old Lodging Report 2025" "Last 90 Days"
   ```
   *Output Example:*
   ```text
@@ -117,10 +117,10 @@ Automates listing and viewing credit card transactions inside the **Available Ex
 * **List Card Transactions:**
   ```bash
   # List corporate and personal cards (default)
-  ./run.sh browser-list-cards "All Corporate and Personal Cards"
+  ./kkw list-cards "All Corporate and Personal Cards"
   
   # List purchasing cards
-  ./run.sh browser-list-cards "All Purchasing Cards"
+  ./kkw list-cards "All Purchasing Cards"
   ```
   *Output Example:*
   ```text
@@ -130,7 +130,7 @@ Automates listing and viewing credit card transactions inside the **Available Ex
 
 * **Get Transaction Details:**
   ```bash
-  ./run.sh browser-card-details "Office Depot" "All Purchasing Cards"
+  ./kkw card-details "Office Depot" "All Purchasing Cards"
   ```
   *Output Example:*
   ```text
@@ -150,16 +150,16 @@ Automates adding and removing delegates, plus managing permissions in the profil
   Add a delegate by name or email, specifying checkboxes for permissions (`prepare`, `submit`, `approve`).
   ```bash
   # Add John Doe with Prepare and Submit permissions
-  ./run.sh browser-add-delegate "John Doe" prepare submit
+  ./kkw add-delegate "John Doe" prepare submit
   
   # Add Jane Smith with Prepare and Approve permissions
-  ./run.sh browser-add-delegate "Jane Smith" prepare approve
+  ./kkw add-delegate "Jane Smith" prepare approve
   ```
 
 * **Remove Expense Delegate:**
   Remove a delegate by selecting their checkbox, triggering 'Delete', and saving the profiles page.
   ```bash
-  ./run.sh browser-remove-delegate "John Doe"
+  ./kkw remove-delegate "John Doe"
   ```
 
 ### 4. Month-End Expense Reconciliation
@@ -169,19 +169,19 @@ Reconciliation is a critical month-end task. The client navigates inside a repor
 * **Reconcile Report (Review-Only / Default):**
   ```bash
   # Reconcile using default built-in matching rules (does not submit)
-  ./run.sh browser-reconcile "Reconciliation Report A"
+  ./kkw reconcile "Reconciliation Report A"
   
   # Reconcile using custom rules (does not submit)
-  ./run.sh browser-reconcile "Reconciliation Report A" my_recon_rules.json
+  ./kkw reconcile "Reconciliation Report A" my_recon_rules.json
   ```
 
 * **Reconcile and Automatically Submit Report:**
   ```bash
   # Reconcile and submit immediately
-  ./run.sh browser-reconcile "Reconciliation Report A" --submit
+  ./kkw reconcile "Reconciliation Report A" --submit
   
   # Reconcile using custom rules and submit
-  ./run.sh browser-reconcile "Reconciliation Report A" my_recon_rules.json --submit
+  ./kkw reconcile "Reconciliation Report A" my_recon_rules.json --submit
   ```
   
   *Example `my_recon_rules.json` file:*
@@ -208,7 +208,7 @@ Matching receipt PDFs or images to individual card transactions can be automated
 
 * **Attach Local Receipt to Report Expense:**
   ```bash
-  ./run.sh browser-attach-receipt "Receipt Upload Report A" "Uber" "receipts/uber_ride_receipt.pdf"
+  ./kkw attach-receipt "Receipt Upload Report A" "Uber" "receipts/uber_ride_receipt.pdf"
   ```
 
 ---
@@ -273,7 +273,7 @@ Modern enterprise security often requires MFA or SSO login screens that standard
 
 1. Run the manual session setup:
    ```bash
-   ./run.sh browser-login
+   ./kkw login
    ```
 2. A headed Chromium window will open. Enter your email/password, solve SSO if prompted, and complete the MFA authentication.
 3. Once logged in and redirected to the SAP Concur dashboard page, return to your terminal and press **ENTER**.
@@ -292,7 +292,7 @@ Modern enterprise security often requires MFA or SSO login screens that standard
 ├── docker-compose.yml      # Service orchestration for testing
 ├── requirements.txt        # Third-party Python dependencies
 ├── .env.example            # Environment variables configuration template
-├── run.sh                  # Zsh shell helper script
+├── kkw                     # Zsh shell helper script (CLI entry point)
 ├── README.md               # Developer-oriented documentation
 ├── src/
 │   ├── __init__.py

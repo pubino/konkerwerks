@@ -1,12 +1,19 @@
+import sys
 import os
 import time
 import logging
+import contextlib
 from typing import Any, Dict, List, Optional
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("ConcurBrowserClient")
+
+
+class ConcurSessionExpiredError(RuntimeError):
+    """Exception raised when the Concur session has expired and requires re-login."""
+    pass
 
 
 class ConcurBrowserClient:
@@ -22,19 +29,47 @@ class ConcurBrowserClient:
         self.screenshot_dir = "screenshots"
         os.makedirs(self.screenshot_dir, exist_ok=True)
 
-    def _take_screenshot(self, page: Any, name: str) -> str:
-        """Helper to capture screenshots for debugging."""
-        path = os.path.join(self.screenshot_dir, f"{name}.png")
-        try:
-            page.screenshot(path=path)
-            logger.info(f"Captured screenshot: {path}")
-            return path
-        except Exception as e:
-            logger.warning(f"Failed to capture screenshot {name}: {str(e)}")
-            return ""
+    def _take_screenshot(self, page: Any, label: str) -> None:
+        if not os.path.exists("screenshots"):
+            os.makedirs("screenshots")
+        # Include PID to prevent interference between concurrent runs
+        pid = os.getpid()
+        path = f"screenshots/{label}_{pid}.png"
+        page.screenshot(path=path)
+        logger.info(f"Captured screenshot: {path}")
+
+    @contextlib.contextmanager
+    def _session_lock(self):
+        """Simple file-based lock for concurrency safety."""
+        lock_file = f"{self.session_file}.lock"
+        with open(lock_file, "w") as f:
+            try:
+                # Exclusive lock, non-blocking if possible (but we'll wait)
+                import fcntl
+                fcntl.flock(f, fcntl.LOCK_EX)
+                yield
+            finally:
+                fcntl.flock(f, fcntl.LOCK_UN)
+                try:
+                    os.remove(lock_file)
+                except:
+                    pass
+
+    def _check_session(self, page: Any) -> None:
+        """Checks if the current page is a login/signin page, indicating an expired session."""
+        url = page.url.lower()
+        if "signin" in url or "login" in url:
+            title = page.title().lower()
+            if "sign in" in title or "login" in title:
+                logger.error("Session expired detected via URL/Title redirection.")
+                raise ConcurSessionExpiredError(
+                    "Your SAP Concur session has expired. Please re-run the login command:\n"
+                    "  ./kkw login"
+                )
 
     def _wait_for_dashboard(self, page: Any) -> None:
         """Helper to wait for Concur's dynamic SPA dashboard elements to load."""
+        self._check_session(page)
         logger.info("Waiting for Concur dashboard to render (handling loading spinners)...")
         try:
             page.wait_for_load_state("load", timeout=15000)
@@ -64,7 +99,6 @@ class ConcurBrowserClient:
         except Exception as e:
             logger.warning(f"Proceeding after busy indicator wait timeout: {str(e)}")
 
-        # Combined selectors representing key elements
         combined_selectors = [
             "#create-report-btn",
             "button:has-text('Create New Report')",
@@ -85,6 +119,23 @@ class ConcurBrowserClient:
             logger.info("Dashboard components loaded and visible.")
         except Exception as e:
             logger.warning(f"Proceeding after dashboard load timeout: {str(e)}")
+
+    def _wait_for_report_view(self, page: Any) -> None:
+        """Helper to wait for the inside of a report to load."""
+        logger.info("Waiting for report details view to render...")
+        combined_selectors = [
+            "button:has-text('Submit Report')",
+            "button:has-text('Report Details')",
+            ".expense-list",
+            "[class*='report-header']",
+            ".sapMLIB"
+        ]
+        combined_str = ", ".join(combined_selectors)
+        try:
+            page.locator(combined_str).first.wait_for(state="visible", timeout=15000)
+            logger.info("Report details view loaded.")
+        except Exception as e:
+            logger.warning(f"Proceeding after report view load timeout: {str(e)}")
 
     def run_headed_login(self) -> None:
         """
@@ -110,7 +161,9 @@ class ConcurBrowserClient:
 
             input("Press ENTER here after you have logged in and see the Concur home page...")
 
-            context.storage_state(path=self.session_file)
+            # Save authenticated state with lock
+            with self._session_lock():
+                context.storage_state(path=self.session_file)
             logger.info(f"Session state successfully saved to {self.session_file}")
             browser.close()
             logger.info("Browser closed.")
@@ -196,7 +249,7 @@ class ConcurBrowserClient:
                 current_url = page.url
                 if "login" in current_url.lower() or "signin" in current_url.lower():
                     self._take_screenshot(page, "session_expired_error")
-                    raise RuntimeError("Session appears to have expired. Please re-run 'login' or './run.sh browser-login'.")
+                    raise RuntimeError("Session appears to have expired. Please re-run 'login' or './kkw login'.")
 
                 # Wait for SPA widgets to load
                 self._wait_for_dashboard(page)
@@ -901,17 +954,62 @@ class ConcurBrowserClient:
                         self._take_screenshot(page, "get_report_details_post_filter")
 
                 # Locate the card and click it to navigate into detail view
-                card = page.locator(".report-tile, .report-card").filter(has_text=name)
-                if card.count() == 0:
-                    card = page.locator(".sapMCard, .sapMLIB").filter(has_text=name)
+                card_selectors = [".report-tile", ".report-card", ".sapMCard", ".sapMLIB", ".cnqr-report-card"]
+                card = None
+                
+                # Strategy 1: Substring match via has_text (case-insensitive)
+                for selector in card_selectors:
+                    loc = page.locator(selector).filter(has_text=name)
+                    if loc.count() > 0:
+                        card = loc.first
+                        logger.info(f"Found report card using selector '{selector}' and has_text.")
+                        break
+                
+                if not card:
+                    # Strategy 2: More flexible whitespace-insensitive match
+                    normalized_name = " ".join(name.split()).lower()
+                    all_cards_loc = page.locator(", ".join(card_selectors))
+                    count = all_cards_loc.count()
+                    for i in range(count):
+                        c = all_cards_loc.nth(i)
+                        card_text = c.text_content() or ""
+                        if normalized_name in " ".join(card_text.split()).lower():
+                            card = c
+                            logger.info(f"Found report card using flexible text matching at index {i}.")
+                            break
 
-                if card.count() == 0:
-                    raise FileNotFoundError(f"No report named '{name}' found.")
+                if not card:
+                    self._take_screenshot(page, "report_not_found_debug")
+                    # Collect names of what IS visible for better error message
+                    visible_reports = []
+                    try:
+                        all_cards_loc = page.locator(", ".join(card_selectors))
+                        for i in range(all_cards_loc.count()):
+                            txt = all_cards_loc.nth(i).text_content()
+                            if txt:
+                                # Try to find the name specifically
+                                first_line = txt.strip().split('\n')[0].strip()
+                                visible_reports.append(first_line)
+                    except:
+                        pass
+                    
+                    err_msg = f"No report named '{name}' found."
+                    if visible_reports:
+                        err_msg += f" Found these reports on page: {visible_reports}"
+                    else:
+                        err_msg += " No report cards visible on page."
+                    
+                    if filter_view:
+                        err_msg += f" (Checked in filter: '{filter_view}')"
+                    else:
+                        err_msg += " (Checked in default view)"
+                        
+                    raise FileNotFoundError(err_msg)
 
-                card.first.click()
+                card.click()
                 page.wait_for_timeout(3000)
-                self._wait_for_dashboard(page)
-                self._take_screenshot(page, "get_report_details_open")
+                self._wait_for_report_view(page)
+                self._take_screenshot(page, "get_report_details_opened")
 
                 # Extract Report Details Header info
                 report_num = "Unknown"
@@ -930,7 +1028,10 @@ class ConcurBrowserClient:
                     try:
                         loc = get_sel(page)
                         if loc.count() > 0:
-                            report_num = loc.first.text_content().replace("Report Number:", "").replace("Report Number", "").strip()
+                            raw = loc.first.text_content()
+                            # Clean up prefix case-insensitively
+                            import re
+                            report_num = re.sub(r'(?i)Report Number:?', '', raw).strip()
                             break
                     except Exception:
                         continue
@@ -945,7 +1046,9 @@ class ConcurBrowserClient:
                     try:
                         loc = get_sel(page)
                         if loc.count() > 0:
-                            purpose = loc.first.text_content().replace("Purpose:", "").replace("Purpose", "").strip()
+                            raw = loc.first.text_content()
+                            import re
+                            purpose = re.sub(r'(?i)Purpose:?', '', raw).strip()
                             break
                     except Exception:
                         continue
@@ -959,26 +1062,139 @@ class ConcurBrowserClient:
                     try:
                         loc = get_sel(page)
                         if loc.count() > 0:
-                            comment = loc.first.text_content().replace("Comment:", "").replace("Comment", "").strip()
+                            raw = loc.first.text_content()
+                            import re
+                            comment = re.sub(r'(?i)Comment:?', '', raw).strip()
                             break
                     except Exception:
                         continue
 
+                # Wait for line items to load specifically
+                try:
+                    # Broaden wait selectors
+                    page.locator(".sapMLIB, [class*='expense-item'], [class*='expense-row'], [role='row'], [role='listitem'], tr").first.wait_for(state="visible", timeout=10000)
+                    logger.info("Line items detected in report details.")
+                except:
+                    logger.warning("Timed out waiting for line items to appear using standard selectors.")
+
                 # List expenses line items
                 expenses = []
-                expense_rows = page.locator(".detail-row, .sapMListUl .sapMLIB, [class*='expense-item'], [class*='expense-row']").all()
-                logger.info(f"Discovered {len(expense_rows)} expense line item(s) inside report details.")
+                # Common selectors for expense rows in various Concur versions
+                row_selectors = [
+                    ".detail-row", 
+                    ".sapMListUl .sapMLIB", 
+                    "[class*='expense-item']", 
+                    "[class*='expense-row']", 
+                    ".sapMCustomListItem",
+                    "[role='row']",
+                    "[role='listitem']",
+                    ".sapMTable tr",
+                    "tr.sapMLIB"
+                ]
+                expense_rows = page.locator(", ".join(row_selectors)).all()
+                logger.info(f"Discovered {len(expense_rows)} potential expense line item(s) using broad selectors.")
+
+                # Common header/noise text to ignore
+                ignore_keywords = ["date", "expense type", "amount", "merchant", "status", "requested", "total", "business purpose"]
 
                 for idx, row in enumerate(expense_rows):
                     try:
-                        text = row.text_content().strip()
-                        if text and ("lodging" in text.lower() or "meal" in text.lower() or "uber" in text.lower() or "hilton" in text.lower() or "merchant" in text.lower() or "amount" in text.lower() or "type" in text.lower()):
-                            expenses.append({
-                                "index": idx,
-                                "raw_text": text
-                            })
+                        text = row.text_content()
+                        if not text:
+                            continue
+                        text = " ".join(text.split()).strip() # Normalize whitespace
+                        
+                        # Basic filtering to avoid empty rows or header rows
+                        if len(text) < 15:
+                            continue
+                            
+                        # If it's a header row, skip it
+                        lower_text = text.lower()
+                        if "expense type" in lower_text and "vendor details" in lower_text:
+                            continue
+                        if "select all rows" in lower_text:
+                            continue
+                        
+                        # Skip if it's just the Report Name or Number we already have
+                        if name.lower() in lower_text or (report_num != "Unknown" and report_num.lower() in lower_text):
+                            if len(text) < len(name) + 25: # Likely just the header
+                                continue
+
+                        # If it's just a placeholder or instruction, skip it
+                        if "no expenses" in lower_text or "add an expense" in lower_text:
+                            continue
+
+                        # Structure parsing
+                        import re
+                        
+                        # Initialize fields
+                        date_str = ""
+                        exp_type = "Unknown"
+                        vendor = "Unknown"
+                        amount = ""
+                        payment_type = "Unknown"
+                        
+                        # Strategy: Many Concur rows follow: "Select expense, Type, Amount, date, Date Vendor Details..."
+                        # Or they are just concatenated.
+                        
+                        # Try to find a date (MM/DD/YYYY)
+                        date_match = re.search(r'(\d{2}/\d{2}/\d{4})', text)
+                        if date_match:
+                            date_str = date_match.group(1)
+                            
+                        # Try to find an amount ($X.XX)
+                        amount_match = re.search(r'(\$\d{1,3}(?:,\d{3})*\.\d{2})', text)
+                        if amount_match:
+                            amount = amount_match.group(1)
+                        
+                        # Try parsing via anchors to handle commas in Type
+                        # Structure: "Select expense, [Type], $[Amount], date, [Date] ..."
+                        anchor_match = re.search(r'Select expense,\s*(.*?),\s*\$\d{1,3}(?:,\d{3})*\.\d{2},\s*date,', text)
+                        if anchor_match:
+                            exp_type = anchor_match.group(1)
+                        else:
+                            # Fallback to comma split if anchor fails
+                            parts = [p.strip() for p in text.split(",")]
+                            if len(parts) >= 4 and "Select expense" in parts[0]:
+                                exp_type = parts[1]
+
+                        # If we have a vendor/merchant, it's usually between the date and payment type
+                        # This is tricky with raw text, so we'll do our best
+                        if date_str and amount:
+                            # Try to find vendor between Date and Payment Type or Amount
+                            # Example: "06/30/2026Computer Peripherals (OIT use only)ANTHROPIC* CLAUDE TEAMDepartmental Purchasing Card$400.00"
+                            pattern = rf'{date_str}.*?{re.escape(exp_type)}?(.*?)(?:Departmental|Corporate|Personal|Cash|{re.escape(amount)})'
+                            vendor_match = re.search(pattern, text)
+                            if vendor_match:
+                                vendor = vendor_match.group(1).strip()
+                                if not vendor: vendor = "Unknown"
+
+                        expenses.append({
+                            "index": idx,
+                            "date": date_str,
+                            "type": exp_type,
+                            "vendor": vendor,
+                            "amount": amount,
+                            "raw_text": text
+                        })
                     except Exception:
                         continue
+                
+                # Deduplicate based on text content
+                unique_expenses = []
+                seen_texts = set()
+                for exp in expenses:
+                    if exp["raw_text"] not in seen_texts:
+                        unique_expenses.append(exp)
+                        seen_texts.add(exp["raw_text"])
+                expenses = unique_expenses
+
+                if not expenses:
+                    logger.warning("No expenses found. Capturing diagnostic screenshot and page text.")
+                    self._take_screenshot(page, "empty_report_details_debug")
+                    # Log all text elements that are visible for debugging
+                    all_text = page.locator("body").text_content()
+                    logger.info(f"Page text content snippet: {all_text[:1000]}...")
 
                 return {
                     "success": True,
@@ -991,6 +1207,252 @@ class ConcurBrowserClient:
 
             except Exception as e:
                 self._take_screenshot(page, "get_report_details_error")
+                raise e
+            finally:
+                browser.close()
+
+    def get_report_allocations(self, report_name: str, filter_view: Optional[str] = None, headless: bool = True) -> Dict[str, Any]:
+        """
+        Navigates to report details, opens the '*Princeton Detailed Report CBS' print view,
+        and parses the detailed text for allocations and chartstrings.
+        """
+        logger.info(f"Querying detailed allocations for report '{report_name}' via Print/Share menu...")
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=headless)
+            context = browser.new_context(storage_state=self.session_file, viewport={"width": 1280, "height": 800})
+            page = context.new_page()
+
+            try:
+                page.goto(f"{self.base_url}/nui/expense", timeout=30000)
+                self._wait_for_dashboard(page)
+                if filter_view:
+                    logger.info(f"Selecting report filter view: {filter_view}...")
+                    view_btn = None
+                    view_selectors = [
+                        lambda p: p.locator("#report-view-select"),
+                        lambda p: p.get_by_role("combobox", name="View", exact=False),
+                        lambda p: p.locator("select[id*='view']"),
+                        lambda p: p.locator(".sapMSelect, [class*='select']").filter(has_text="Reports").first,
+                        lambda p: p.get_by_text("Active Reports", exact=True),
+                        lambda p: p.locator("button:has-text('Active Reports')")
+                    ]
+                    for idx, get_sel in enumerate(view_selectors):
+                        try:
+                            loc = get_sel(page)
+                            if loc.is_visible(timeout=2000):
+                                view_btn = loc
+                                break
+                        except Exception:
+                            continue
+
+                    if view_btn:
+                        tag_name = view_btn.evaluate("el => el.tagName.toLowerCase()")
+                        if tag_name == "select":
+                            view_btn.select_option(label=filter_view)
+                        else:
+                            view_btn.click()
+                            page.wait_for_timeout(1000)
+                            option = page.get_by_role("option", name=filter_view, exact=False)
+                            if not option.is_visible(timeout=1000):
+                                option = page.locator(f".sapMSelectListItem:has-text('{filter_view}')")
+                            if not option.is_visible(timeout=1000):
+                                option = page.locator(f"text={filter_view}").last
+                            option.click()
+                        page.wait_for_timeout(3000)
+                        self._wait_for_dashboard(page)
+
+                # Extra wait for dynamic cards to populate
+                page.wait_for_timeout(5000)
+
+                # 1. Locate and open the report using robust logic
+                card_selectors = [".report-tile", ".report-card", ".sapMCard", ".sapMLIB", ".cnqr-report-card"]
+                card = None
+                
+                # Strategy 1: Substring match via has_text (case-insensitive)
+                for selector in card_selectors:
+                    loc = page.locator(selector).filter(has_text=report_name)
+                    if loc.count() > 0:
+                        card = loc.first
+                        logger.info(f"Found report card using selector '{selector}' and has_text.")
+                        break
+                
+                if not card:
+                    # Strategy 2: More flexible whitespace-insensitive match
+                    normalized_name = " ".join(report_name.split()).lower()
+                    all_cards_loc = page.locator(", ".join(card_selectors))
+                    count = all_cards_loc.count()
+                    print(f"DEBUG: Checking {count} total potential cards for a match...", file=sys.stderr)
+                    for i in range(count):
+                        c = all_cards_loc.nth(i)
+                        card_text = c.text_content() or ""
+                        clean_text = " ".join(card_text.split())
+                        print(f"DEBUG:   Card {i} text: '{clean_text}'", file=sys.stderr)
+                        if normalized_name in clean_text.lower():
+                            card = c
+                            logger.info(f"Found report card using flexible text matching at index {i}.")
+                            break
+
+                if not card:
+                    print(f"DEBUG: Current URL: {page.url}", file=sys.stderr)
+                    print(f"DEBUG: Page Title: {page.title()}", file=sys.stderr)
+                    self._take_screenshot(page, "allocations_report_not_found")
+                    # Try to find ANY text that looks like reports
+                    try:
+                        all_text = page.locator("body").text_content()
+                        print(f"DEBUG: Page Text (first 1000 chars): {all_text[:1000]}", file=sys.stderr)
+                    except:
+                        pass
+                    raise FileNotFoundError(f"Could not find report '{report_name}'.")
+
+                card.click()
+                page.wait_for_timeout(3000)
+                self._wait_for_report_view(page)
+                self._take_screenshot(page, "allocations_report_opened")
+
+                # 1. Click Print/Share
+                try:
+                    print_btn = page.locator("button:has-text('Print/Share'), .sapMBtn:has-text('Print/Share')").first
+                    print_btn.click()
+                    page.wait_for_timeout(1000)
+                    self._take_screenshot(page, "print_menu_open")
+                except Exception as e:
+                    logger.warning(f"Failed to find Print/Share button: {str(e)}")
+                    # Fallback to existing logic if Print/Share fails
+                    return {"success": False, "error": "Could not find Print/Share menu"}
+
+                # 2. Click '*Princeton Detailed Report CBS' and catch popup
+                try:
+                    # Look for the menu item with retries and multiple selector strategies
+                    menu_item_selectors = [
+                        "text='*Princeton Detailed Report CBS'",
+                        "[role='menuitem']:has-text('Princeton Detailed Report CBS')",
+                        ".sapMSelectListItem:has-text('Princeton Detailed Report CBS')",
+                        "button:has-text('Princeton Detailed Report CBS')",
+                        "li:has-text('Princeton Detailed Report CBS')"
+                    ]
+                    
+                    target_item = None
+                    for attempt in range(3):
+                        for selector in menu_item_selectors:
+                            loc = page.locator(selector).first
+                            if loc.is_visible():
+                                target_item = loc
+                                break
+                        if target_item: break
+                        page.wait_for_timeout(1500)
+                        # Re-click Print/Share if menu didn't appear
+                        if attempt > 0:
+                            print_btn.click()
+                    
+                    if not target_item:
+                        # Final attempt: search by text globally
+                        target_item = page.get_by_text("Princeton Detailed Report CBS", exact=False).first
+
+                    logger.info(f"Attempting to click menu item: '{target_item.text_content().strip()}'")
+                    # Debug: log the tag and classes
+                    tag_name = target_item.evaluate("el => el.tagName")
+                    logger.info(f"Target element tag: {tag_name}")
+
+                    # Attempt to trigger the report view
+                    # We'll try to handle both popups and in-page modals
+                    print_page = None
+                    full_text = None
+
+                    try:
+                        # Try to catch a popup first (older Concur style)
+                        with page.expect_popup(timeout=5000) as popup_info:
+                            try:
+                                target_item.click(timeout=2000)
+                            except:
+                                page.evaluate("el => el.click()", target_item.element_handle())
+                        print_page = popup_info.value
+                        print_page.wait_for_load_state("networkidle")
+                        full_text = print_page.locator("body").text_content()
+                        self._take_screenshot(print_page, "detailed_report_popup_view")
+                        print_page.close()
+                    except Exception:
+                        # If no popup, it's likely an in-page modal (newer Concur style)
+                        logger.info("No popup detected, checking for in-page modal...")
+                        # The click might have already happened in the try block above, 
+                        # but let's ensure it's clicked if we didn't get a popup.
+                        dialog_selector = "div[role='dialog'], .print-report-dialog"
+                        if not page.locator(dialog_selector).is_visible():
+                            try:
+                                target_item.click(force=True)
+                            except:
+                                page.evaluate("el => el.click()", target_item.element_handle())
+                        
+                        # Wait for dialog to appear
+                        page.locator(dialog_selector).first.wait_for(state="visible", timeout=15000)
+                        self._take_screenshot(page, "detailed_report_modal_view")
+                        
+                        # Extract text from the dialog body
+                        dialog_body = page.locator(".print-report-dialog__body, .sapcnqr-dialog__body").first
+                        full_text = dialog_body.text_content()
+                        
+                        # Close the modal to clean up
+                        close_btn = page.locator("button:has-text('Close'), .sapMBtn:has-text('Close')").last
+                        if close_btn.is_visible():
+                            close_btn.click()
+
+                    if not full_text:
+                        raise RuntimeError("Failed to capture detailed report text from either popup or modal.")
+                except Exception as e:
+                    logger.warning(f"Failed to open detailed report popup: {str(e)}")
+                    # Capture current page state for debugging
+                    self._take_screenshot(page, "print_menu_failure_debug")
+                    return {"success": False, "error": f"Failed to open detailed report: {str(e)}"}
+
+                # 3. Parse the detailed text
+                import re
+                allocations = []
+                
+                # Normalize text: replace non-breaking spaces and multi-spaces
+                clean_text = full_text.replace('\u00a0', ' ')
+                
+                # Pattern for an expense row followed by allocations
+                # 1. Find all dates as anchors
+                date_matches = list(re.finditer(r'(\d{2}/\d{2}/\d{4})', clean_text))
+                
+                for idx, match in enumerate(date_matches):
+                    start = match.start()
+                    end = date_matches[idx+1].start() if idx + 1 < len(date_matches) else len(clean_text)
+                    section = clean_text[start:end]
+                    
+                    # Inside this section, look for "Allocations :"
+                    if "Allocations :" in section:
+                        date = match.group(1)
+                        # Extract amount (e.g., $400.00)
+                        amount_match = re.search(r'\$(\d{1,3}(?:,\d{3})*(?:\.\d{2}))', section)
+                        amount = amount_match.group(0) if amount_match else "Unknown"
+                        
+                        # Extract chartstring (e.g., 25605-A0006)
+                        # Pattern: 5 digits - 1 letter + 4 digits
+                        chartstring_match = re.search(r'(\d{5}-[A-Z]\d{4})', section)
+                        chartstring = chartstring_match.group(1) if chartstring_match else "Unknown"
+                        
+                        # Guess the expense type (right after the date)
+                        type_match = re.search(r'\d{2}/\d{2}/\d{4}\s+([^\$]+?)\s+', section)
+                        exp_type = type_match.group(1).strip() if type_match else "Unknown"
+                        
+                        allocations.append({
+                            "index": idx + 1,
+                            "date": date,
+                            "type": exp_type,
+                            "amount": amount,
+                            "chartstring": chartstring,
+                            "raw_section": section[:200].strip() + "..." if len(section) > 200 else section.strip()
+                        })
+
+                return {
+                    "success": True,
+                    "report_name": report_name,
+                    "allocations": allocations,
+                    "raw_text_summary": clean_text[:1000] + "..." if len(clean_text) > 1000 else clean_text
+                }
+
+            except Exception as e:
+                self._take_screenshot(page, "allocations_error")
                 raise e
             finally:
                 browser.close()

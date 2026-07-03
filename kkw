@@ -1,0 +1,283 @@
+#!/usr/bin/env zsh
+
+# Helper script for running tests, CLI, and browser automation on macOS
+
+set -euo pipefail
+
+# Print usage helper to stderr
+usage() {
+    echo "Usage: ./kkw [command]" >&2
+    echo "Commands:" >&2
+    echo "  setup                 Set up local virtual environment, install requirements, and Playwright browsers" >&2
+    echo "  test-local            Run mock unit tests locally on the host" >&2
+    echo "  test-docker           Build and run mock unit tests inside Docker container" >&2
+    echo "  test-browser-smoke    Run Playwright browser CRUD smoke tests (using local mock server)" >&2
+    echo "  test-reports-live     Run Playwright reports CRUD smoke test on your real Concur account" >&2
+    echo "  test-receipts-live    Run Playwright receipts list/delete smoke test on your real Concur account" >&2
+    echo "  run-live              Run live API integration test (requires configuring .env)" >&2
+    echo "  login                 Launch headed browser for manual Concur authentication and save session state" >&2
+    echo "  check-session         Check whether the currently saved browser session state is valid and active" >&2
+    echo "  query                 Run Playwright query to list current reports and receipts (requires session)" >&2
+    echo "  create                Run Playwright automation to create a draft report headlessly" >&2
+    echo "  create-headed         Run Playwright automation to create a draft report visibly (headed)" >&2
+    echo "  delete \"Name\"         Run Playwright to delete a specific report by name" >&2
+    echo "  delete-all-reports    Run Playwright to delete all draft expense reports" >&2
+    echo "  delete-all-receipts   Run Playwright to delete all available receipts" >&2
+    echo "  nuke                  Run Playwright to delete all reports AND all receipts" >&2
+    echo "  query-old [filter]    Query and list historical/old expense reports (default: 'Last 90 Days')" >&2
+    echo "  report-details \"Name\" [filter] Get detailed view of an expense report by name" >&2
+    echo "  allocations \"Name\" [filter] Query allocation details (cost centers) for a report" >&2
+    echo "  list-cards [filter]   Query and list credit card transactions (default: 'All Corporate and Personal Cards')" >&2
+    echo "  card-details \"Merchant/ID\" [filter] Get detailed view of a card transaction by merchant or ID" >&2
+    echo "  add-delegate \"Name or Email\" [perms...] Add a new expense delegate (permissions: prepare, submit, approve)" >&2
+    echo "  remove-delegate \"Name or Email\" Remove an expense delegate" >&2
+    echo "  reconcile \"Name\" [rules.json] [--submit] Reconcile expense report transactions (default: review-only, --submit to submit)" >&2
+    echo "  attach-receipt \"Name\" \"Merchant\" \"receipt.pdf\" Attach a local receipt file to a report transaction" >&2
+    exit 1
+}
+
+if [ $# -lt 1 ]; then
+    usage
+fi
+
+CMD=$1
+
+# Helper to activate local virtual env if it exists, or create it
+ensure_venv() {
+    if [ ! -d ".venv" ]; then
+        echo "Virtual environment not found. Setting it up first..." >&2
+        python3 -m venv .venv
+        source .venv/bin/activate
+        pip install -r requirements.txt
+        playwright install chromium
+    else
+        source .venv/bin/activate
+    fi
+}
+
+case "$CMD" in
+    setup)
+        echo "=== Setting up local Python Virtual Environment ===" >&2
+        python3 -m venv .venv
+        source .venv/bin/activate
+        pip install --upgrade pip
+        pip install -r requirements.txt
+        echo "=== Installing Playwright browser binaries ===" >&2
+        playwright install chromium
+        echo "Setup complete! Activate using: source .venv/bin/activate" >&2
+        ;;
+    test-local)
+        echo "=== Running local unit tests ===" >&2
+        ensure_venv
+        python3 -m unittest discover -s tests
+        ;;
+    test-docker)
+        echo "=== Running containerized unit tests via Docker Compose ===" >&2
+        docker-compose build unit-tests
+        docker-compose run --rm unit-tests
+        ;;
+    test-browser-smoke)
+        echo "=== Running Playwright Browser CRUD Smoke Tests ===" >&2
+        ensure_venv
+        python3 tests/test_browser_smoke.py
+        ;;
+    test-reports-live)
+        echo "=== Running Live Concur Reports Smoke Test ===" >&2
+        ensure_venv
+        python3 tests/smoke_test_reports.py
+        ;;
+    test-receipts-live)
+        echo "=== Running Live Concur Receipts Smoke Test ===" >&2
+        ensure_venv
+        python3 tests/smoke_test_receipts.py "${@:2}"
+        ;;
+    run-live)
+        echo "=== Running live integration test ===" >&2
+        if [ ! -f ".env" ]; then
+            echo "[ERROR] .env file not found. Please copy .env.example to .env and populate it with credentials." >&2
+            exit 1
+        fi
+        ensure_venv
+        python3 src/cli.py api-test
+        ;;
+    login)
+        echo "=== Launching browser login automation ===" >&2
+        ensure_venv
+        python3 src/cli.py login
+        ;;
+    check-session)
+        ensure_venv
+        python3 src/cli.py check-session
+        ;;
+    query)
+        echo "=== Querying reports and receipts via browser ===" >&2
+        ensure_venv
+        python3 src/cli.py query
+        ;;
+    create)
+        echo "=== Running headless browser report creation ===" >&2
+        ensure_venv
+        ARGS=()
+        if [ $# -ge 2 ]; then
+            ARGS+=("--name" "$2")
+        fi
+        if [ $# -ge 3 ]; then
+            ARGS+=("--purpose" "$3")
+        fi
+        if [ $# -ge 4 ]; then
+            ARGS+=("--comment" "$4")
+        fi
+        python3 src/cli.py create-report "${ARGS[@]}"
+        ;;
+    create-headed)
+        echo "=== Running headed browser report creation ===" >&2
+        ensure_venv
+        ARGS=()
+        if [ $# -ge 2 ]; then
+            ARGS+=("--name" "$2")
+        fi
+        if [ $# -ge 3 ]; then
+            ARGS+=("--purpose" "$3")
+        fi
+        if [ $# -ge 4 ]; then
+            ARGS+=("--comment" "$4")
+        fi
+        python3 src/cli.py create-report --headed "${ARGS[@]}"
+        ;;
+    delete)
+        if [ $# -lt 2 ]; then
+            echo "Error: Please specify the report name to delete." >&2
+            echo "Usage: ./kkw delete \"Report Name\"" >&2
+            exit 1
+        fi
+        echo "=== Deleting report via browser ===" >&2
+        ensure_venv
+        python3 src/cli.py delete-report "$2"
+        ;;
+    delete-all-reports)
+        ensure_venv
+        python3 src/cli.py delete-all-reports
+        ;;
+    delete-all-receipts)
+        ensure_venv
+        python3 src/cli.py delete-all-receipts
+        ;;
+    nuke)
+        ensure_venv
+        python3 src/cli.py nuke
+        ;;
+    query-old)
+        ensure_venv
+        FILTER="${2:-Last 90 Days}"
+        python3 src/cli.py list-old-reports --filter-view "$FILTER"
+        ;;
+    report-details)
+        if [ $# -lt 2 ]; then
+            echo "Error: Please specify the report name." >&2
+            echo "Usage: ./kkw report-details \"Report Name\" [filter]" >&2
+            exit 1
+        fi
+        ensure_venv
+        REPORT_NAME="$2"
+        if [ $# -ge 3 ]; then
+            python3 src/cli.py report-details "$REPORT_NAME" --filter-view "$3"
+        else
+            python3 src/cli.py report-details "$REPORT_NAME"
+        fi
+        ;;
+    allocations)
+        if [ $# -lt 2 ]; then
+            echo "Error: Please specify the report name." >&2
+            echo "Usage: ./kkw allocations \"Report Name\" [filter]" >&2
+            exit 1
+        fi
+        ensure_venv
+        REPORT_NAME="$2"
+        if [ $# -ge 3 ]; then
+            python3 src/cli.py allocations "$REPORT_NAME" --filter-view "$3"
+        else
+            python3 src/cli.py allocations "$REPORT_NAME"
+        fi
+        ;;
+    list-cards)
+        ensure_venv
+        FILTER="${2:-All Corporate and Personal Cards}"
+        python3 src/cli.py list-cards --filter-view "$FILTER"
+        ;;
+    card-details)
+        if [ $# -lt 2 ]; then
+            echo "Error: Please specify the card transaction merchant name or transaction ID." >&2
+            echo "Usage: ./kkw card-details \"Merchant or ID\" [filter]" >&2
+            exit 1
+        fi
+        ensure_venv
+        FILTER="${3:-All Corporate and Personal Cards}"
+        python3 src/cli.py card-details "$2" --filter-view "$FILTER"
+        ;;
+    add-delegate)
+        if [ $# -lt 2 ]; then
+            echo "Error: Please specify the delegate name/email." >&2
+            echo "Usage: ./kkw add-delegate \"Name or Email\" [permission1 permission2 ...]" >&2
+            exit 1
+        fi
+        ensure_venv
+        NAME="$2"
+        # Gather all permissions (arguments starting from $3)
+        shift 2
+        PERMS=("$@")
+        if [ ${#PERMS[@]} -eq 0 ]; then
+            PERMS=("prepare")
+        fi
+        python3 src/cli.py add-delegate "$NAME" --delegate-perms "${PERMS[@]}"
+        ;;
+    remove-delegate)
+        if [ $# -lt 2 ]; then
+            echo "Error: Please specify the delegate name/email." >&2
+            echo "Usage: ./kkw remove-delegate \"Name or Email\"" >&2
+            exit 1
+        fi
+        ensure_venv
+        python3 src/cli.py remove-delegate "$2"
+        ;;
+    reconcile)
+        if [ $# -lt 2 ]; then
+            echo "Error: Please specify the report name to reconcile." >&2
+            echo "Usage: ./kkw reconcile \"Report Name\" [rules.json] [--submit]" >&2
+            exit 1
+        fi
+        ensure_venv
+        REPORT_NAME="$2"
+        RULES_FILE=""
+        SUBMIT_FLAG=""
+        shift 2
+        while [ $# -gt 0 ]; do
+            if [ "$1" = "--submit" ]; then
+                SUBMIT_FLAG="--submit"
+            else
+                RULES_FILE="$1"
+            fi
+            shift
+        done
+        if [ -n "$RULES_FILE" ] && [ -n "$SUBMIT_FLAG" ]; then
+            python3 src/cli.py reconcile "$REPORT_NAME" --reconcile-rules "$RULES_FILE" --submit
+        elif [ -n "$RULES_FILE" ]; then
+            python3 src/cli.py reconcile "$REPORT_NAME" --reconcile-rules "$RULES_FILE"
+        elif [ -n "$SUBMIT_FLAG" ]; then
+            python3 src/cli.py reconcile "$REPORT_NAME" --submit
+        else
+            python3 src/cli.py reconcile "$REPORT_NAME"
+        fi
+        ;;
+    attach-receipt)
+        if [ $# -lt 4 ]; then
+            echo "Error: Please specify report name, merchant name, and local receipt file path." >&2
+            echo "Usage: ./kkw attach-receipt \"Report Name\" \"Merchant Name\" \"receipt.pdf\"" >&2
+            exit 1
+        fi
+        ensure_venv
+        python3 src/cli.py attach-receipt "$2" --merchant "$3" --receipt-path "$4"
+        ;;
+    *)
+        usage
+        ;;
+esac
