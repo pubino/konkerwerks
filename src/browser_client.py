@@ -1759,20 +1759,15 @@ class ConcurBrowserClient:
                             if comment_match:
                                 comment_field = comment_match.group(1).strip()
                             else:
-                                # Stricter icon detection to avoid false positives on items 2 and 3
+                                # Stricter icon detection to avoid false positives
                                 try:
-                                    # Focus on the specific comment icon class and ensure it's visible
-                                    comment_icon = row.locator(".sapcnqr-icon--comment, .sapUiIcon[title*='Comment']").filter(visible=True).first
-                                    if comment_icon.count() > 0:
-                                        icon_text = comment_icon.get_attribute("title") or comment_icon.get_attribute("aria-label") or ""
+                                    # Look for buttons or icons that represent the comment bubble
+                                    comment_btn = row.locator("button[class*='comment'], .sapMBtn[title*='Comment'], .sapUiIcon[title*='Comment'], i[class*='comment']").filter(visible=True).first
+                                    if comment_btn.count() > 0:
+                                        icon_text = comment_btn.get_attribute("title") or comment_btn.get_attribute("aria-label") or ""
                                         # Only accept it if it contains actual user text
-                                        if icon_text and icon_text.strip().lower() not in ["comment", "comments", "view comment"]:
+                                        if icon_text and icon_text.strip().lower() not in ["", "comment", "comments", "view comment", "show comments", "add comment"]:
                                             comment_field = icon_text.strip()
-                                        else:
-                                            # If we see the icon but no tooltip text, we at least know it's there
-                                            # but we'll mark as empty if user says it's wrong. 
-                                            # Actually, let's keep it empty unless we have text to be safe.
-                                            comment_field = ""
                                 except:
                                     pass
                                 if not comment_field:
