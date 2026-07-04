@@ -824,7 +824,8 @@ class ConcurBrowserClient:
                         # Fill in the fields
                         if expense_type is not None:
                             # Search for the expense type input - SCOPED to detail pane
-                            inp_type = detail_pane.locator("input[id*='type']:not([id*='header']), [data-nuiexp*='type']:not([data-nuiexp*='header']), .sapMInputBaseInner[id*='type']:not([id*='header']), select[id*='type']").first
+                            # MUST be an input or select
+                            inp_type = detail_pane.locator("input[id*='type']:not([id*='header']), select[id*='type']:not([id*='header']), .sapMInputBaseInner[id*='type']:not([id*='header'])").first
                             if inp_type.count() > 0:
                                 try:
                                     tag_name = inp_type.evaluate("el => el.tagName.toLowerCase()")
@@ -852,14 +853,23 @@ class ConcurBrowserClient:
                                             logger.info(f"  [{current_idx}] No exact list match, used Enter")
                                         
                                         page.wait_for_timeout(1000)
-                                        # Verify it stuck
-                                        current_val = inp_type.input_value()
-                                        if expense_type.lower() not in current_val.lower():
-                                            logger.warning(f"  [{current_idx}] Warning: Expense type value '{current_val}' may not have updated correctly.")
+                                        # Verify it stuck - only if it's an input/select
+                                        tag = inp_type.evaluate("el => el.tagName.toLowerCase()")
+                                        if tag in ["input", "textarea", "select"]:
+                                            current_val = inp_type.input_value()
+                                            if expense_type.lower() not in current_val.lower():
+                                                logger.warning(f"  [{current_idx}] Warning: Expense type value '{current_val}' may not have updated correctly.")
                                 except Exception as type_e:
                                     logger.error(f"  [{current_idx}] Failed to update expense type: {type_e}")
                             else:
-                                logger.warning(f"  [{current_idx}] Could not find Expense Type field in detail pane")
+                                # Try one more broad but restricted to inputs
+                                inp_type = detail_pane.locator("input, select, textarea").filter(has_text=re.compile("Type", re.I)).first
+                                if inp_type.count() > 0:
+                                     # ... same logic or just fill
+                                     inp_type.fill(expense_type)
+                                     logger.info(f"  [{current_idx}] Updated expense type via broad fallback")
+                                else:
+                                    logger.warning(f"  [{current_idx}] Could not find Expense Type field in detail pane")
 
                         if business_purpose is not None:
                             # Use provided HTML attributes for business purpose - SCOPED to detail pane
@@ -1814,6 +1824,8 @@ class ConcurBrowserClient:
                                 ".sapMBtnBack",
                                 "button[title*='Back']",
                                 "button[aria-label*='Back']"
+                                "button[aria-label*='Back']",
+                                "button[id*='back']"
                             ]
                             clicked_back = False
                             for sel in back_selectors:
@@ -1823,14 +1835,23 @@ class ConcurBrowserClient:
                                     self._dismiss_modals(page)
                                     btn.click(force=True)
                                     clicked_back = True
-                                    page.wait_for_timeout(3000)
+                                    
+                                    # Wait and VERIFY we are back in the list, NOT the dashboard
+                                    page.wait_for_timeout(2000)
+                                    if page.locator(".report-tile").count() > 0 and page.locator(", ".join(row_selectors)).count() == 0:
+                                        logger.warning("  Oops! Went back to dashboard. Re-opening report...")
+                                        report_card = page.locator(".report-tile").filter(has_text=report_name).first
+                                        if report_card.count() > 0:
+                                            report_card.click()
+                                            page.wait_for_timeout(3000)
                                     break
                             
                             if not clicked_back:
-                                # Try to click outside or press Escape as a last resort
-                                logger.warning("  No back button found. Trying Escape key.")
-                                page.keyboard.press("Escape")
-                                page.wait_for_timeout(2000)
+                                # Check if detail pane is still visible
+                                if page.locator("#sapcnqr-layout-side-panel-elements").filter(visible=True).count() > 0:
+                                    logger.warning("  Detail pane still visible. Trying Escape key.")
+                                    page.keyboard.press("Escape")
+                                    page.wait_for_timeout(2000)
                             
                         except Exception as e:
                             logger.error(f"  Failed to deep scan transaction {idx}: {e}")
