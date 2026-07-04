@@ -780,41 +780,58 @@ class ConcurBrowserClient:
                                 page.wait_for_timeout(5000)
                                 self._dismiss_modals(page)
                                 # Re-locate the row after reload
-                                rows = page.locator("table tbody tr, [role='row']").all()
-                                if current_idx - 1 < len(rows):
-                                    row = rows[current_idx - 1]
-                                else:
-                                    raise Exception(f"Row {current_idx} disappeared after reload")
 
-                            # 1. Deselect any other rows first
-                            try:
-                                selected_rows = page.locator(".sapMLIBSelected, [aria-selected='true'], [aria-current='true']").all()
-                                for sel_row in selected_rows:
-                                    if sel_row != row:
-                                        cb = sel_row.locator(".sapMCb, [type='checkbox']").first
-                                        is_checked = cb.evaluate("el => el.classList.contains('sapMCbMarkChecked') || el.getAttribute('aria-checked') === 'true'")
-                                        if is_checked:
-                                            cb.click(force=True)
-                                            page.wait_for_timeout(500)
-                            except:
-                                pass
+                            # 1. Re-identify rows to avoid staleness
+                            row_selectors = [
+                                ".sapcnqr-data-grid-list__row",
+                                ".detail-row",
+                                ".sapMListUl .sapMLIB",
+                                "[class*='expense-item']",
+                                "[class*='expense-row']",
+                                ".sapMCustomListItem",
+                                "[role='row']",
+                                "[role='listitem']",
+                                ".sapMTable tr",
+                                "tr.sapMLIB"
+                            ]
+                            all_rows = page.locator(", ".join(row_selectors)).all()
+                            # Filter to find the correct valid row
+                            current_valid_rows = []
+                            for r in all_rows:
+                                try:
+                                    text = r.text_content()
+                                    if not text: continue
+                                    text = " ".join(text.split()).strip()
+                                    if len(text) < 15: continue
+                                    lower_text = text.lower()
+                                    if "expense type" in lower_text and "vendor details" in lower_text: continue
+                                    if "select all rows" in lower_text: continue
+                                    current_valid_rows.append(r)
+                                except: continue
+                            
+                            if current_idx > len(current_valid_rows):
+                                logger.warning(f"  [{current_idx}] Index out of range in this attempt (found {len(current_valid_rows)}).")
+                                continue
+                            
+                            row = current_valid_rows[current_idx - 1]
 
                             # 2. Select target row
-                            cb = row.locator(".sapMCb, [type='checkbox']").first
-                            if cb.count() > 0:
-                                is_checked = cb.evaluate("el => el.classList.contains('sapMCbMarkChecked') || el.getAttribute('aria-checked') === 'true'")
-                                if not is_checked:
+                            try:
+                                # Scroll into view
+                                row.scroll_into_view_if_needed()
+                                cb = row.locator(".sapMCb, [type='checkbox']").first
+                                if cb.count() > 0:
                                     cb.click(force=True)
-                                    page.wait_for_timeout(1000)
-                            else:
-                                row.click(force=True)
+                                else:
+                                    row.click(force=True)
                                 page.wait_for_timeout(1000)
+                            except: pass
                             
                             # 3. Final verification of 'Edit' button or Detail pane
                             edit_btn_selectors = [
+                                "[data-nuiexp='edit-button']",
                                 "button:has-text('Edit')",
                                 ".sapMBtn:has-text('Edit')",
-                                "[data-nuiexp='edit-button']",
                                 "button[title='Edit']"
                             ]
                             
@@ -822,8 +839,8 @@ class ConcurBrowserClient:
                                 btn = page.locator(sel).first
                                 if btn.count() > 0 and btn.is_visible():
                                     try:
-                                        # Wait for it to be enabled (Concur Fiori delay)
-                                        btn.wait_for_element_state("enabled", timeout=5000)
+                                        # Wait for it to be enabled
+                                        btn.wait_for_element_state("enabled", timeout=3000)
                                         logger.info(f"  [{current_idx}] 'Edit' button enabled, clicking.")
                                         btn.click(force=True)
                                         # Wait for pane to appear
@@ -831,38 +848,38 @@ class ConcurBrowserClient:
                                             page.wait_for_selector("[data-nuiexp*='field'], input[id*='type'], .sapMInputBaseInner", timeout=5000)
                                             selection_successful = True
                                             break
-                                        except:
-                                            logger.warning(f"  [{current_idx}] Clicked 'Edit' but no fields appeared.")
-                                    except:
-                                        logger.warning(f"  [{current_idx}] 'Edit' button visible but not enabled yet.")
+                                        except: pass
+                                    except: pass
                             
-                            if not selection_successful:
-                                # Fallback 1: Double click the row
-                                logger.info(f"  [{current_idx}] Falling back to double-click on row...")
-                                row.dblclick(force=True)
-                                try:
-                                    page.wait_for_selector("[data-nuiexp*='field'], input[id*='type']", timeout=5000)
-                                    selection_successful = True
-                                except:
-                                    logger.warning(f"  [{current_idx}] Double-click did not open detail pane.")
-
-                            if not selection_successful:
-                                # Fallback 2: Use "Actions" kebab menu in the row
-                                logger.info(f"  [{current_idx}] Falling back to 'Actions' kebab menu...")
+                            if selection_successful:
+                                break
+                                
+                            # Fallback: Use "Actions" kebab menu
+                            logger.info(f"  [{current_idx}] Falling back to 'Actions' kebab menu...")
+                            try:
                                 actions_btn = row.locator("button[aria-label='Actions'], .entries-list-actions-button").first
                                 if actions_btn.count() > 0:
                                     actions_btn.click(force=True)
-                                    # Look for "Edit" or "Open" in the menu
                                     menu_item = page.locator(".sapMMenuItemText:has-text('Edit'), .sapMMenuItemText:has-text('Open'), [role='menuitem']:has-text('Edit')").first
                                     if menu_item.count() > 0:
                                         menu_item.click()
                                         try:
                                             page.wait_for_selector("[data-nuiexp*='field']", timeout=5000)
                                             selection_successful = True
+                                            break
                                         except: pass
-                            
-                            if selection_successful:
-                                break
+                            except: pass
+
+                            # Fallback: Double click the row
+                            logger.info(f"  [{current_idx}] Falling back to double-click on row...")
+                            try:
+                                row.dblclick(force=True)
+                                try:
+                                    page.wait_for_selector("[data-nuiexp*='field'], input[id*='type']", timeout=5000)
+                                    selection_successful = True
+                                    break
+                                except: pass
+                            except: pass
                                 
                         if not selection_successful:
                             raise Exception(f"Failed to open transaction detail pane for index {current_idx}")
