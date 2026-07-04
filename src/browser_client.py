@@ -824,32 +824,42 @@ class ConcurBrowserClient:
                         # Fill in the fields
                         if expense_type is not None:
                             # Search for the expense type input - SCOPED to detail pane
-                            inp_type = detail_pane.locator("input[id*='type']:not([id*='header']), [data-nuiexp*='type']:not([data-nuiexp*='header']), .sapMInputBaseInner[id*='type']:not([id*='header'])").first
+                            inp_type = detail_pane.locator("input[id*='type']:not([id*='header']), [data-nuiexp*='type']:not([data-nuiexp*='header']), .sapMInputBaseInner[id*='type']:not([id*='header']), select[id*='type']").first
                             if inp_type.count() > 0:
-                                # ... existing selection logic ...
-                                tag_name = inp_type.evaluate("el => el.tagName.toLowerCase()")
-                                if tag_name == "select":
-                                    inp_type.select_option(label=expense_type)
-                                    logger.info(f"  [{current_idx}] Selected expense type via <select>")
-                                else:
-                                    # Handle searchable dropdown (Fiori style)
-                                    inp_type.click()
-                                    page.wait_for_timeout(500)
-                                    # Clear field
-                                    page.keyboard.press("Control+A")
-                                    page.keyboard.press("Backspace")
-                                    page.keyboard.type(expense_type)
-                                    page.wait_for_timeout(1000)
-                                    
-                                    # Look for the matching item in the dropdown list
-                                    list_item = page.locator(".sapMStandardListItem, .sapMLIB, [role='listitem']").filter(has_text=re.compile(f"^{re.escape(expense_type)}$", re.I)).first
-                                    if list_item.count() > 0 and list_item.is_visible():
-                                        list_item.click()
-                                        logger.info(f"  [{current_idx}] Selected matching item '{expense_type}' from dropdown list")
+                                try:
+                                    tag_name = inp_type.evaluate("el => el.tagName.toLowerCase()")
+                                    if tag_name == "select":
+                                        inp_type.select_option(label=expense_type)
+                                        logger.info(f"  [{current_idx}] Selected expense type via <select>")
                                     else:
-                                        page.keyboard.press("Enter")
-                                        logger.info(f"  [{current_idx}] Updated expense type via Enter fallback")
-                                    page.wait_for_timeout(500)
+                                        # Handle searchable dropdown (Suggester)
+                                        logger.info(f"  [{current_idx}] Attempting to update expense type via Suggester: {expense_type}")
+                                        inp_type.click()
+                                        page.wait_for_timeout(500)
+                                        # Clear field
+                                        page.keyboard.press("Control+A")
+                                        page.keyboard.press("Backspace")
+                                        page.keyboard.type(expense_type, delay=100)
+                                        page.wait_for_timeout(1500)
+                                        
+                                        # Look for the matching item in the dropdown list
+                                        list_item = page.locator(".sapMStandardListItem, .sapMLIB, [role='listitem'], .sapMComboBoxBaseItem, .suggestion-item").filter(has_text=re.compile(f"^{re.escape(expense_type)}$", re.I)).first
+                                        if list_item.count() > 0 and list_item.is_visible():
+                                            list_item.click()
+                                            logger.info(f"  [{current_idx}] Selected matching item from dropdown list")
+                                        else:
+                                            page.keyboard.press("Enter")
+                                            logger.info(f"  [{current_idx}] No exact list match, used Enter")
+                                        
+                                        page.wait_for_timeout(1000)
+                                        # Verify it stuck
+                                        current_val = inp_type.input_value()
+                                        if expense_type.lower() not in current_val.lower():
+                                            logger.warning(f"  [{current_idx}] Warning: Expense type value '{current_val}' may not have updated correctly.")
+                                except Exception as type_e:
+                                    logger.error(f"  [{current_idx}] Failed to update expense type: {type_e}")
+                            else:
+                                logger.warning(f"  [{current_idx}] Could not find Expense Type field in detail pane")
 
                         if business_purpose is not None:
                             # Use provided HTML attributes for business purpose - SCOPED to detail pane
