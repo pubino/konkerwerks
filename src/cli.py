@@ -130,6 +130,7 @@ def run_tests():
     # Command: report-details
     p_rep_det = subparsers.add_parser("report-details", help="Get detailed view of an expense report by name")
     p_rep_det.add_argument("report_name", type=str, help="Name of the expense report")
+    p_rep_det.add_argument("--deep", action="store_true", help="Deep scan: open each transaction to get full details")
     p_rep_det.add_argument("--filter-view", type=str, help="Dropdown filter to look inside (default: current view)")
 
     # Command: list-cards
@@ -170,10 +171,23 @@ def run_tests():
     # Command: update-transaction
     p_up_tx = subparsers.add_parser("update-transaction", help="Update fields of an expense/transaction inside a report")
     p_up_tx.add_argument("report_name", type=str, help="Name of the expense report")
-    p_up_tx.add_argument("transaction_index", type=int, help="0-based index of the transaction row")
+    p_up_tx.add_argument("transaction_indices", type=int, nargs="+", help="1-based indices of the transaction rows (e.g. 1 2 5)")
     p_up_tx.add_argument("--type", type=str, help="Expense Type")
     p_up_tx.add_argument("--purpose", type=str, help="Business Purpose")
     p_up_tx.add_argument("--comment", type=str, help="Comment")
+    p_up_tx.add_argument("--justification", type=str, help="Shortcut to set both purpose and comment to the same text")
+
+    # Command: update-report
+    p_up_rep = subparsers.add_parser("update-report", help="Update the header fields (name, purpose, comment) of an expense report")
+    p_up_rep.add_argument("report_name", type=str, help="Current name of the expense report")
+    p_up_rep.add_argument("--name", type=str, help="New name for the report")
+    p_up_rep.add_argument("--purpose", type=str, help="New business purpose for the report")
+    p_up_rep.add_argument("--comment", type=str, help="New comment for the report")
+    p_up_rep.add_argument("--justification", type=str, help="Shortcut to set both purpose and comment to the same text")
+
+    # Command: submit-report
+    p_sub = subparsers.add_parser("submit-report", help="Submit an expense report for approval")
+    p_sub.add_argument("report_name", type=str, help="Name of the expense report to submit")
 
     args = parser.parse_args()
 
@@ -620,7 +634,7 @@ def run_tests():
             try:
                 with Spinner(f"Fetching details for '{report_name_val}'..."):
                     browser_client = ConcurBrowserClient()
-                    details = browser_client.get_report_details(name=report_name_val, filter_view=filter_val, headless=True)
+                    details = browser_client.get_report_details(name=report_name_val, filter_view=filter_val, deep=args.deep, headless=True)
                 
                 summary = "[SUCCESS] Details retrieved:\n"
                 summary += f"  Name:     {details.get('report_name')}\n"
@@ -899,33 +913,118 @@ def run_tests():
         # ----------------------------------------------------
         elif args.command == "update-transaction":
             report_name_val = args.report_name
-            tx_idx = args.transaction_index
+            tx_indices = args.transaction_indices
             exp_type = args.type
             bus_purpose = args.purpose
             cmt = args.comment
+            
+            if args.justification:
+                if not bus_purpose: bus_purpose = args.justification
+                if not cmt: cmt = args.justification
 
             if args.output == "text":
                 print("=" * 60)
-                print(f"     SAP Concur Update Transaction: Row {tx_idx} in '{report_name_val}'")
+                print(f"     SAP Concur Update Transaction: {len(tx_indices)} items in '{report_name_val}'")
                 print("=" * 60)
             try:
-                with Spinner(f"Updating transaction index {tx_idx} in report '{report_name_val}'..."):
+                with Spinner(f"Updating {len(tx_indices)} transaction(s) in report '{report_name_val}'..."):
                     browser_client = ConcurBrowserClient()
                     res = browser_client.update_report_transaction(
                         report_name=report_name_val,
-                        transaction_index=tx_idx,
+                        transaction_indices=tx_indices,
                         expense_type=exp_type,
                         business_purpose=bus_purpose,
                         comment=cmt,
                         headless=True
                     )
-                summary = f"\n[SUCCESS] Transaction fields updated successfully!\n" + "=" * 60
+                
+                success_count = sum(1 for r in res.get("results", []) if r["success"])
+                summary = f"\n[SUCCESS] Updated {success_count}/{len(tx_indices)} transactions successfully!\n"
+                for r in res.get("results", []):
+                    status = "OK" if r["success"] else f"FAILED ({r.get('error')})"
+                    if r.get("validation_error"):
+                        status += f" (WARNING: {r['validation_error']})"
+                    elif r.get("note"):
+                        status += f" (NOTE: {r['note']})"
+                    summary += f"  - Index {r['index']}: {status}\n"
+                summary += "=" * 60
                 output_result(res, summary)
             except ConcurSessionExpiredError as e:
                 handle_session_expired(e)
             except Exception as e:
                 if args.output == "text":
                     print(f"\n[ERROR] Failed to update transaction: {str(e)}\n" + "=" * 60)
+                else:
+                    print(json.dumps({"status": "error", "message": str(e)}))
+                sys.exit(1)
+        # ----------------------------------------------------
+        # Flow R: Update Report Header Fields
+        # ----------------------------------------------------
+        elif args.command == "update-report":
+            old_name = args.report_name
+            new_name = args.name or old_name
+            bus_purpose = args.purpose
+            cmt = args.comment
+            
+            if args.justification:
+                if not bus_purpose: bus_purpose = args.justification
+                if not cmt: cmt = args.justification
+
+            if args.output == "text":
+                print("=" * 60)
+                print(f"     SAP Concur Update Report Header: '{old_name}'")
+                print("=" * 60)
+            try:
+                with Spinner(f"Updating report header for '{old_name}'..."):
+                    browser_client = ConcurBrowserClient()
+                    res = browser_client.update_report(
+                        old_name=old_name,
+                        new_name=new_name,
+                        new_purpose=bus_purpose,
+                        new_comment=cmt,
+                        headless=True
+                    )
+                
+                summary = f"\n[SUCCESS] Successfully updated report header for '{old_name}'!\n"
+                if new_name != old_name:
+                    summary += f"  - New Name: {new_name}\n"
+                if bus_purpose:
+                    summary += f"  - Purpose:  {bus_purpose}\n"
+                if cmt:
+                    summary += f"  - Comment:  {cmt}\n"
+                summary += "=" * 60
+                output_result(res, summary)
+            except ConcurSessionExpiredError as e:
+                handle_session_expired(e)
+            except Exception as e:
+                if args.output == "text":
+                    print(f"\n[ERROR] Failed to update report header: {str(e)}\n" + "=" * 60)
+                else:
+                    print(json.dumps({"status": "error", "message": str(e)}))
+                sys.exit(1)
+
+        # ----------------------------------------------------
+        # Flow S: Submit Report
+        # ----------------------------------------------------
+        elif args.command == "submit-report":
+            report_name_val = args.report_name
+            if args.output == "text":
+                print("=" * 60)
+                print(f"     SAP Concur Submit Report: '{report_name_val}'")
+                print("=" * 60)
+            try:
+                with Spinner(f"Submitting report '{report_name_val}'..."):
+                    browser_client = ConcurBrowserClient()
+                    res = browser_client.submit_report(report_name=report_name_val, headless=True)
+                
+                summary = f"\n[SUCCESS] Successfully submitted report: '{report_name_val}'\n"
+                summary += "=" * 60
+                output_result(res, summary)
+            except ConcurSessionExpiredError as e:
+                handle_session_expired(e)
+            except Exception as e:
+                if args.output == "text":
+                    print(f"\n[ERROR] Failed to submit report: {str(e)}\n" + "=" * 60)
                 else:
                     print(json.dumps({"status": "error", "message": str(e)}))
                 sys.exit(1)
