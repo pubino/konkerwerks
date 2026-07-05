@@ -929,41 +929,50 @@ class ConcurBrowserClient:
                         if detail_pane.count() == 0:
                             # Fallback to whole page if specific pane ID not found
                             detail_pane = page
-                        
                         # Tracking successes
                         updates_attempted = 0
                         updates_found = 0
                         
+                        # Use a more robust approach to find inputs in the detail pane
+                        input_context = detail_pane if detail_pane.count() > 0 else page
+                        
                         # Fill in the fields
                         if expense_type is not None:
                             updates_attempted += 1
-                            # Search for the expense type input - use the broad locator we found earlier
-                            inp_type = type_field
+                            # Search for the expense type input - broadened selectors
+                            type_selectors = [
+                                "select.recon-type",
+                                "select[data-nuiexp*='type']",
+                                "select[id*='type']",
+                                "[data-nuiexp*='type']:not([id*='header'])",
+                                "input[id*='type']:not([id*='header'])",
+                                ".sapMInputBaseInner[id*='type']"
+                            ]
+                            inp_type = input_context.locator(", ".join(type_selectors)).filter(visible=True).first
+                            
                             if inp_type.count() > 0:
                                 try:
-                                    logger.info(f"  [{current_idx}] Attempting to update expense type via precise selector: {expense_type}")
-                                    # Click the field to focus
-                                    inp_type.click(force=True)
-                                    page.wait_for_timeout(500)
-                                    
-                                    # Look for a clear button if it exists
-                                    clear_btn = page.locator("[data-nuiexp='field-expenseType__clear']").first
-                                    if clear_btn.count() > 0 and clear_btn.is_visible():
-                                        clear_btn.click()
-                                        page.wait_for_timeout(500)
-                                        # Re-click the trigger to focus after clear
-                                        trigger = page.locator("[data-nuiexp='field-expenseType__trigger']").first
-                                        if trigger.count() > 0: trigger.click()
+                                    logger.info(f"  [{current_idx}] Attempting to update expense type: {expense_type}")
+                                    tag_name = inp_type.evaluate("el => el.tagName.toLowerCase()")
+                                    if tag_name == "select":
+                                        inp_type.select_option(label=expense_type)
                                     else:
-                                        # Use keyboard to clear
+                                        # Click the field to focus
+                                        inp_type.click(force=True)
+                                        page.wait_for_timeout(500)
+                                        
+                                        # Look for a clear button if it exists
+                                        clear_btn = page.locator("[data-nuiexp='field-expenseType__clear']").first
+                                        if clear_btn.count() > 0 and clear_btn.is_visible():
+                                            clear_btn.click()
+                                            page.wait_for_timeout(500)
+                                            # Re-click the trigger to focus after clear
+                                            trigger = page.locator("[data-nuiexp='field-expenseType__trigger']").first
+                                            if trigger.count() > 0: trigger.click()
+                                        
+                                        # Clear manually just in case
                                         page.keyboard.press("Control+A")
                                         page.keyboard.press("Backspace")
-                                    
-                                    # Type with delay to trigger suggestions
-                                    page.keyboard.type(expense_type, delay=100)
-                                    # Wait for suggestions to appear
-                                    page.wait_for_timeout(3000)
-                                    
                                     # Look for the matching item in the dropdown list (Fiori specific)
                                     list_item = page.locator(".sapMStandardListItem, .sapMLIB, [role='listitem'], .sapMComboBoxBaseItem, .suggestion-item, .sapMSelectListItem, .sapMListUl li").filter(has_text=re.compile(f"^{re.escape(expense_type)}$", re.I)).first
                                     
