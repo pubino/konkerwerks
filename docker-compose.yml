@@ -13,3 +13,14 @@ services:
     # Mounts .env file from host to inject actual SAP Concur credentials
     volumes:
       - ./.env:/app/.env
+
+  allocation-test:
+    build: .
+    container_name: concur-allocation-test
+    environment:
+      - PYTHONPATH=/app
+    # Runs the specific allocation CRUD tests
+    command: ["python", "tests/test_allocations_crud.py"]
+    volumes:
+      - ./concur_session.json:/app/concur_session.json
+      - ./screenshots:/app/screenshots
