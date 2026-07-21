@@ -3597,6 +3597,24 @@ class ConcurBrowserClient:
                             inp_comment.fill("")
                             inp_comment.fill(comment)
                             
+                    # Upload Receipt File if specified
+                    receipt_path = exp.get("receipt_file_path") or exp.get("receipt_file")
+                    if receipt_path:
+                        if os.path.exists(receipt_path):
+                            logger.info(f"  Uploading receipt file: {receipt_path}")
+                            input_file = input_context.locator("input.recon-receipt-file, input[type='file'], input[id*='receipt']").first
+                            if input_file.count() > 0:
+                                try:
+                                    input_file.set_input_files(receipt_path)
+                                    page.wait_for_timeout(2000)
+                                    logger.info(f"  Successfully attached receipt: {receipt_path}")
+                                except Exception as e:
+                                    logger.warning(f"  Failed to attach receipt: {e}")
+                            else:
+                                logger.warning(f"  Could not find receipt file input field for row {idx+1}")
+                        else:
+                            logger.warning(f"  Receipt file path does not exist locally: {receipt_path}")
+                            
                     # Save
                     save_btn_selectors = [
                         "[data-nuiexp='exp-save-expense']",

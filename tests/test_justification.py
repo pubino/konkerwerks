@@ -124,5 +124,37 @@ class TestJustificationAndClassification(unittest.TestCase):
         self.assertFalse(res["results"][0]["success"])
         self.assertFalse(res["success"])
 
+    def test_04_bulk_apply_json_with_receipt(self):
+        """Test applying JSON updates with a simulated receipt upload."""
+        report_name = "Bulk Apply JSON Test"
+        self.client.create_draft_report(name=report_name)
+        
+        # Create a dummy receipt file
+        dummy_receipt = "temp_receipt.png"
+        with open(dummy_receipt, "w") as f:
+            f.write("dummy image data")
+            
+        try:
+            updates = [
+                {
+                    "index": 0,
+                    "expense_type": "Software",
+                    "business_purpose": "Bulk purpose",
+                    "comment": "Bulk comment",
+                    "receipt_file_path": dummy_receipt
+                }
+            ]
+            
+            res = self.client.apply_json_updates(
+                report_name=report_name,
+                expenses=updates,
+                headless=True
+            )
+            self.assertTrue(res["success"])
+            self.assertTrue(res["results"][0]["success"])
+        finally:
+            if os.path.exists(dummy_receipt):
+                os.remove(dummy_receipt)
+
 if __name__ == "__main__":
     unittest.main()
