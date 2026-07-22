@@ -7,6 +7,9 @@ import re
 from typing import Any, Dict, List, Optional, Union
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
+from ccworks import paths
+from ccworks.browser_bootstrap import ensure_chromium
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("ConcurBrowserClient")
@@ -22,20 +25,18 @@ class ConcurBrowserClient:
 
     def __init__(
         self,
-        session_file: str = "concur_session.json",
+        session_file: Optional[str] = None,
         base_url: str = "https://www.concursolutions.com"
     ):
-        self.session_file = session_file
+        self.session_file = session_file if session_file else str(paths.session_file())
         self.base_url = base_url.rstrip("/")
-        self.screenshot_dir = "screenshots"
-        os.makedirs(self.screenshot_dir, exist_ok=True)
+        self.screenshot_dir = str(paths.screenshot_dir())
+        ensure_chromium()
 
     def _take_screenshot(self, page: Any, label: str) -> None:
-        if not os.path.exists("screenshots"):
-            os.makedirs("screenshots")
         # Include PID to prevent interference between concurrent runs
         pid = os.getpid()
-        path = f"screenshots/{label}_{pid}.png"
+        path = os.path.join(self.screenshot_dir, f"{label}_{pid}.png")
         page.screenshot(path=path)
         logger.info(f"Captured screenshot: {path}")
 
@@ -275,7 +276,7 @@ class ConcurBrowserClient:
         if not os.path.exists(self.session_file):
             raise FileNotFoundError(
                 f"Session file '{self.session_file}' not found. "
-                "Please run login configuration first using: python3 src/cli.py login"
+                "Please run login configuration first using: ccworks login"
             )
 
         logger.info(f"Launching browser (headless={headless}) using session from {self.session_file}...")
@@ -416,7 +417,7 @@ class ConcurBrowserClient:
                     "success": True,
                     "report_name": name,
                     "screenshot_folder": os.path.abspath(self.screenshot_dir),
-                    "notes": "Verify details in screenshots/04_after_creation_completed.png"
+                    "notes": f"Verify details in {os.path.join(self.screenshot_dir, '04_after_creation_completed.png')}"
                 }
 
             except PlaywrightTimeoutError as e:

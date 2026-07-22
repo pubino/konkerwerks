@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ccworks"
+version = "0.1.0"
+description = "SAP Concur browser-automation and API helper"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE.md" }
+authors = [
+    { name = "Michael Bino" },
+]
+keywords = ["concur", "sap-concur", "expense-report", "browser-automation", "playwright"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial",
+]
+dependencies = [
+    "requests>=2.31.0",
+    "python-dotenv>=1.0.1",
+    "playwright>=1.44.0",
+]
+
+[project.scripts]
+ccworks = "ccworks.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/pu-orfe/ccworks"
+Source = "https://github.com/pu-orfe/ccworks"
+Issues = "https://github.com/pu-orfe/ccworks/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ccworks"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+    "/README.md",
+    "/LICENSE.md",
+    "/pyproject.toml",
+    "/.env.example",
+]

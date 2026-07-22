@@ -9,7 +9,7 @@ services:
   integration-tester:
     build: .
     container_name: concur-integration-tester
-    entrypoint: ["python", "src/cli.py"]
+    entrypoint: ["python", "-m", "ccworks.cli"]
     # Mounts .env file from host to inject actual SAP Concur credentials
     volumes:
       - ./.env:/app/.env
@@ -17,8 +17,6 @@ services:
   allocation-test:
     build: .
     container_name: concur-allocation-test
-    environment:
-      - PYTHONPATH=/app
     # Runs the specific allocation CRUD tests
     command: ["python", "tests/test_allocations_crud.py"]
     volumes:

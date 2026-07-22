@@ -19,11 +19,8 @@ def signal_handler(sig, frame):
 signal.signal(signal.SIGHUP, signal_handler)
 signal.signal(signal.SIGINT, signal_handler)
 
-# Add current directory to path to allow importing from src
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-from src.client import ConcurClient, ConcurError
-from src.browser_client import ConcurBrowserClient, ConcurSessionExpiredError
+from ccworks.client import ConcurClient, ConcurError
+from ccworks.browser_client import ConcurBrowserClient, ConcurSessionExpiredError
 
 
 def handle_session_expired(e):
@@ -376,7 +373,7 @@ def run_tests():
                 browser_client.run_headed_login()
                 
                 result = {"status": "success", "message": "Manual login setup complete."}
-                summary = "\n[SUCCESS] Setup complete. You can now run browser-based automations.\nTo run the draft creator, use: python3 src/cli.py create-report"
+                summary = "\n[SUCCESS] Setup complete. You can now run browser-based automations.\nTo run the draft creator, use: ccworks create"
                 output_result(result, summary)
             except ConcurSessionExpiredError as e:
 
@@ -1139,5 +1136,9 @@ def run_tests():
         handle_session_expired(e)
 
 
-if __name__ == "__main__":
+def main():
     run_tests()
+
+
+if __name__ == "__main__":
+    main()

@@ -24,7 +24,31 @@ It supports two modes of interaction:
 
 ## 🚀 Getting Started
 
-### 1. Configuration
+### Install with Homebrew (recommended on macOS)
+
+```bash
+brew tap pu-orfe/tap
+brew install ccworks
+```
+
+This gives you a `ccworks` command anywhere on your PATH. The first time you
+run a browser-based command (e.g. `ccworks login`), ccworks will prompt to
+download Playwright's chromium browser (~180 MB) into
+`~/Library/Caches/ms-playwright` — a one-time step.
+
+Session state (login cookies, screenshots) is written to
+`~/Library/Application Support/ccworks` (macOS) or
+`$XDG_STATE_HOME/ccworks` (Linux). Override with `CCWORKS_STATE_DIR=/some/path`.
+
+### Install from source (developers)
+
+```bash
+git clone https://github.com/pu-orfe/ccworks.git
+cd ccworks
+./ccworks setup       # creates .venv, `pip install -e .`, installs chromium
+```
+
+### Configure credentials
 
 Copy the template `.env.example` file to `.env`, and populate it with your credentials:
 
@@ -39,13 +63,8 @@ CONCUR_CLIENT_SECRET=your_actual_client_secret
 CONCUR_USER_LOGIN_ID=target_user_email@company.com
 ```
 
-### 2. Setup Local Environment
-
-Build the Python environment, install requirements, and download Playwright chromium browser binaries:
-
-```bash
-./ccworks setup
-```
+`ccworks` searches upward from the directory you invoke it in to find a
+`.env`, so keep one per working folder (e.g. per fiscal-year records folder).
 
 ---
 

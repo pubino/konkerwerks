@@ -3,7 +3,7 @@ import sys
 import time
 import logging
 import subprocess
-from src.browser_client import ConcurBrowserClient
+from ccworks.browser_client import ConcurBrowserClient
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

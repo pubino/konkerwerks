@@ -5,9 +5,9 @@ import time
 from datetime import datetime
 
 # Adjust path to import src modules
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
-from src.browser_client import ConcurBrowserClient
+from ccworks.browser_client import ConcurBrowserClient
 
 
 def run_live_reports_smoke_test():

@@ -1,12 +1,24 @@
 #!/usr/bin/env zsh
 
-# Helper script for running tests, CLI, and browser automation on macOS
+# Dev-checkout launcher for ccworks.
+#
+# When installed via Homebrew (or `pip install ccworks`), an entry point named
+# `ccworks` is provided directly on PATH by the package — this shell script
+# is not used in that case.
+#
+# In a repo checkout this script keeps the ergonomic `./ccworks <cmd>` UX:
+# it manages the .venv, invokes the CLI via `python -m ccworks.cli`, and only
+# reaches for docker/docker-compose when a test-docker subcommand explicitly
+# asks for them.
 
 set -euo pipefail
 
-# Print usage helper to stderr
+# Resolve the script's own directory so `./ccworks` works from any cwd.
+SCRIPT_DIR="${0:A:h}"
+cd "$SCRIPT_DIR"
+
 usage() {
-    echo "Usage: ./ccworks [command]" >&2
+    echo "Usage: ccworks [command]" >&2
     echo "Commands:" >&2
     echo "  setup                 Set up local virtual environment, install requirements, and Playwright browsers" >&2
     echo "  test-local            Run mock unit tests locally on the host" >&2
@@ -46,17 +58,46 @@ fi
 
 CMD=$1
 
-# Helper to activate local virtual env if it exists, or create it
+# Activate the local dev venv, creating it (with the package installed
+# editable) on first use.
 ensure_venv() {
     if [ ! -d ".venv" ]; then
         echo "Virtual environment not found. Setting it up first..." >&2
         python3 -m venv .venv
         source .venv/bin/activate
-        pip install -r requirements.txt
+        pip install --upgrade pip
+        pip install -e .
         playwright install chromium
     else
         source .venv/bin/activate
     fi
+}
+
+# Confirm docker + docker-compose are available before invoking them.
+# Docker Desktop / OrbStack / Colima are installed as casks or externally,
+# so we can't ship them as a formula dependency — check at runtime instead.
+require_docker_compose() {
+    if ! command -v docker >/dev/null 2>&1; then
+        echo "[ERROR] 'docker' is not on PATH." >&2
+        echo "        Install Docker Desktop (brew install --cask docker), OrbStack," >&2
+        echo "        or Colima before running docker-based commands." >&2
+        exit 127
+    fi
+    if command -v docker-compose >/dev/null 2>&1; then
+        COMPOSE_CMD=(docker-compose)
+    elif docker compose version >/dev/null 2>&1; then
+        COMPOSE_CMD=(docker compose)
+    else
+        echo "[ERROR] Neither 'docker-compose' nor 'docker compose' is available." >&2
+        echo "        Install the Docker Compose plugin or standalone docker-compose." >&2
+        exit 127
+    fi
+}
+
+# Run the packaged CLI. Works from a fresh dev checkout because ensure_venv
+# does `pip install -e .`, which registers the `ccworks` module.
+run_cli() {
+    python -m ccworks.cli "$@"
 }
 
 case "$CMD" in
@@ -65,7 +106,7 @@ case "$CMD" in
         python3 -m venv .venv
         source .venv/bin/activate
         pip install --upgrade pip
-        pip install -r requirements.txt
+        pip install -e .
         echo "=== Installing Playwright browser binaries ===" >&2
         playwright install chromium
         echo "Setup complete! Activate using: source .venv/bin/activate" >&2
@@ -77,8 +118,9 @@ case "$CMD" in
         ;;
     test-docker)
         echo "=== Running containerized unit tests via Docker Compose ===" >&2
-        docker-compose build unit-tests
-        docker-compose run --rm unit-tests
+        require_docker_compose
+        "${COMPOSE_CMD[@]}" build unit-tests
+        "${COMPOSE_CMD[@]}" run --rm unit-tests
         ;;
     test-browser-smoke)
         echo "=== Running Playwright Browser CRUD Smoke Tests ===" >&2
@@ -102,21 +144,21 @@ case "$CMD" in
             exit 1
         fi
         ensure_venv
-        python3 src/cli.py api-test
+        run_cli api-test
         ;;
     login)
         echo "=== Launching browser login automation ===" >&2
         ensure_venv
-        python3 src/cli.py login
+        run_cli login
         ;;
     check-session)
         ensure_venv
-        python3 src/cli.py check-session
+        run_cli check-session
         ;;
     query)
         echo "=== Querying reports and receipts via browser ===" >&2
         ensure_venv
-        python3 src/cli.py query
+        run_cli query
         ;;
     create)
         echo "=== Running headless browser report creation ===" >&2
@@ -131,7 +173,7 @@ case "$CMD" in
         if [ $# -ge 4 ]; then
             ARGS+=("--comment" "$4")
         fi
-        python3 src/cli.py create-report "${ARGS[@]}"
+        run_cli create-report "${ARGS[@]}"
         ;;
     create-headed)
         echo "=== Running headed browser report creation ===" >&2
@@ -146,101 +188,98 @@ case "$CMD" in
         if [ $# -ge 4 ]; then
             ARGS+=("--comment" "$4")
         fi
-        python3 src/cli.py create-report --headed "${ARGS[@]}"
+        run_cli create-report --headed "${ARGS[@]}"
         ;;
     delete)
         if [ $# -lt 2 ]; then
             echo "Error: Please specify the report name to delete." >&2
-            echo "Usage: ./ccworks delete \"Report Name\"" >&2
+            echo "Usage: ccworks delete \"Report Name\"" >&2
             exit 1
         fi
         echo "=== Deleting report via browser ===" >&2
         ensure_venv
-        python3 src/cli.py delete-report "$2"
+        run_cli delete-report "$2"
         ;;
     delete-all-reports)
         ensure_venv
-        python3 src/cli.py delete-all-reports
+        run_cli delete-all-reports
         ;;
     delete-all-receipts)
         ensure_venv
-        python3 src/cli.py delete-all-receipts
+        run_cli delete-all-receipts
         ;;
     nuke)
         ensure_venv
-        python3 src/cli.py nuke
+        run_cli nuke
         ;;
     query-old)
         ensure_venv
         FILTER="${2:-Last 90 Days}"
-        python3 src/cli.py list-old-reports --filter-view "$FILTER"
+        run_cli list-old-reports --filter-view "$FILTER"
         ;;
     report-details)
         if [ $# -lt 2 ]; then
             echo "Error: Please specify the report name." >&2
-            echo "Usage: ./ccworks report-details \"Report Name\" [args...]" >&2
+            echo "Usage: ccworks report-details \"Report Name\" [args...]" >&2
             exit 1
         fi
         ensure_venv
-        # Pass all arguments starting from $2
         shift 1
-        python3 src/cli.py report-details "$@"
+        run_cli report-details "$@"
         ;;
     allocations)
         if [ $# -lt 2 ]; then
             echo "Error: Please specify the report name." >&2
-            echo "Usage: ./ccworks allocations \"Report Name\" [args...]" >&2
+            echo "Usage: ccworks allocations \"Report Name\" [args...]" >&2
             exit 1
         fi
         ensure_venv
-        # Pass all arguments starting from $2
         shift 1
-        python3 src/cli.py allocations "$@"
+        run_cli allocations "$@"
         ;;
     list-cards)
         ensure_venv
         FILTER="${2:-All Corporate and Personal Cards}"
-        python3 src/cli.py list-cards --filter-view "$FILTER"
+        run_cli list-cards --filter-view "$FILTER"
         ;;
     card-details)
         if [ $# -lt 2 ]; then
             echo "Error: Please specify the card transaction merchant name or transaction ID." >&2
-            echo "Usage: ./ccworks card-details \"Merchant or ID\" [filter]" >&2
+            echo "Usage: ccworks card-details \"Merchant or ID\" [filter]" >&2
             exit 1
         fi
         ensure_venv
         FILTER="${3:-All Corporate and Personal Cards}"
-        python3 src/cli.py card-details "$2" --filter-view "$FILTER"
+        run_cli card-details "$2" --filter-view "$FILTER"
         ;;
     add-delegate)
         if [ $# -lt 2 ]; then
             echo "Error: Please specify the delegate name/email." >&2
-            echo "Usage: ./ccworks add-delegate \"Name or Email\" [permission1 permission2 ...]" >&2
+            echo "Usage: ccworks add-delegate \"Name or Email\" [permission1 permission2 ...]" >&2
             exit 1
         fi
         ensure_venv
         NAME="$2"
-        # Gather all permissions (arguments starting from $3)
         shift 2
         PERMS=("$@")
         if [ ${#PERMS[@]} -eq 0 ]; then
             PERMS=("prepare")
         fi
-        python3 src/cli.py add-delegate "$NAME" --delegate-perms "${PERMS[@]}"
+        run_cli add-delegate "$NAME" --delegate-perms "${PERMS[@]}"
         ;;
     remove-delegate)
         if [ $# -lt 2 ]; then
             echo "Error: Please specify the delegate name/email." >&2
-            echo "Usage: ./ccworks remove-delegate \"Name or Email\"" >&2
+            echo "Usage: ccworks remove-delegate \"Name or Email\"" >&2
             exit 1
         fi
         ensure_venv
-        python3 src/cli.py remove-delegate "$2"
+        run_cli remove-delegate "$2"
         ;;
     reconcile)
         if [ $# -lt 2 ]; then
             echo "Error: Please specify the report name to reconcile." >&2
-            echo "Usage: ./ccworks reconcile \"Report Name\" [rules.json] [--submit]" >&2
+            echo "Usage: ccworks reconcile \"Report Name\" [rules.json] [--submit]" >&2
             exit 1
         fi
         ensure_venv
@@ -257,63 +296,63 @@ case "$CMD" in
             shift
         done
         if [ -n "$RULES_FILE" ] && [ -n "$SUBMIT_FLAG" ]; then
-            python3 src/cli.py reconcile "$REPORT_NAME" --reconcile-rules "$RULES_FILE" --submit
+            run_cli reconcile "$REPORT_NAME" --reconcile-rules "$RULES_FILE" --submit
         elif [ -n "$RULES_FILE" ]; then
-            python3 src/cli.py reconcile "$REPORT_NAME" --reconcile-rules "$RULES_FILE"
+            run_cli reconcile "$REPORT_NAME" --reconcile-rules "$RULES_FILE"
         elif [ -n "$SUBMIT_FLAG" ]; then
-            python3 src/cli.py reconcile "$REPORT_NAME" --submit
+            run_cli reconcile "$REPORT_NAME" --submit
         else
-            python3 src/cli.py reconcile "$REPORT_NAME"
+            run_cli reconcile "$REPORT_NAME"
         fi
         ;;
     attach-receipt)
         if [ $# -lt 4 ]; then
             echo "Error: Please specify report name, merchant name, and local receipt file path." >&2
-            echo "Usage: ./ccworks attach-receipt \"Report Name\" \"Merchant Name\" \"receipt.pdf\"" >&2
+            echo "Usage: ccworks attach-receipt \"Report Name\" \"Merchant Name\" \"receipt.pdf\"" >&2
             exit 1
         fi
         ensure_venv
-        python3 src/cli.py attach-receipt "$2" --merchant "$3" --receipt-path "$4"
+        run_cli attach-receipt "$2" --merchant "$3" --receipt-path "$4"
         ;;
     update-transaction)
         if [ $# -lt 3 ]; then
             echo "Error: Please specify report name and transaction index." >&2
-            echo "Usage: ./ccworks update-transaction \"Report Name\" [indices...] [--type \"T\"] [--justification \"J\"]" >&2
+            echo "Usage: ccworks update-transaction \"Report Name\" [indices...] [--type \"T\"] [--justification \"J\"]" >&2
             exit 1
         fi
         ensure_venv
         REPORT_NAME="$2"
         shift 2
-        python3 src/cli.py update-transaction "$REPORT_NAME" "$@"
+        run_cli update-transaction "$REPORT_NAME" "$@"
         ;;
     update-report)
         if [ $# -lt 2 ]; then
             echo "Error: Please specify the report name." >&2
-            echo "Usage: ./ccworks update-report \"Report Name\" [args...]" >&2
+            echo "Usage: ccworks update-report \"Report Name\" [args...]" >&2
             exit 1
         fi
         ensure_venv
         REPORT_NAME="$2"
         shift 2
-        python3 src/cli.py update-report "$REPORT_NAME" "$@"
+        run_cli update-report "$REPORT_NAME" "$@"
         ;;
     submit-report)
         if [ $# -lt 2 ]; then
             echo "Error: Please specify the report name to submit." >&2
-            echo "Usage: ./ccworks submit-report \"Report Name\"" >&2
+            echo "Usage: ccworks submit-report \"Report Name\"" >&2
             exit 1
         fi
         ensure_venv
-        python3 src/cli.py submit-report "$2"
+        run_cli submit-report "$2"
         ;;
     apply-json)
         if [ $# -lt 2 ]; then
             echo "Error: Please specify the JSON file path." >&2
-            echo "Usage: ./ccworks apply-json \"path/to/edited.json\"" >&2
+            echo "Usage: ccworks apply-json \"path/to/edited.json\"" >&2
             exit 1
         fi
         ensure_venv
-        python3 src/cli.py apply-json "$2"
+        run_cli apply-json "$2"
         ;;
     *)
         usage

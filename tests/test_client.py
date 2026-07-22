@@ -5,9 +5,9 @@ import sys
 import os
 
 # Adjust path to import src modules
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
-from src.client import ConcurClient, ConcurAuthError, ConcurAPIError
+from ccworks.client import ConcurClient, ConcurAuthError, ConcurAPIError
 
 
 class TestConcurClient(unittest.TestCase):
